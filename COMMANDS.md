@@ -1,0 +1,265 @@
+# 指令速查
+
+所有指令都在 `backend/` 目錄下執行（除非另有註明）。
+在 Claude Code 對話中可以用 `!` 前綴直接跑，例如 `!uv run python -m jobs.demo --status`。
+
+```bash
+cd /Volumes/myPro/codes/race/youbike-hackathon/backend
+```
+
+---
+
+## 1. 後端服務
+
+```bash
+# 啟動（--reload = 改 code 自動重載，開發時建議帶）
+uv run uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
+
+# 停掉正在跑的
+pkill -f "uvicorn app.main:app"
+
+# 確認活著（demo 模式時 now 會是虛擬時間）
+curl -s http://127.0.0.1:8000/healthz | python3 -m json.tool
+```
+
+⚠️ `--reset` 是 `jobs.demo` 的參數，**不是 uvicorn 的**。
+
+### API 端點
+
+| 方法 | 路徑 | 說明 |
+|---|---|---|
+| GET | `/healthz` | 系統時間、endpoint 名、排程開關、資料進度 |
+| GET | `/api/v1/towns` | 29 個行政區與站數 |
+| GET | `/api/v1/stations` | 全量站表（1,538 站，約 330 KB） |
+| GET | `/api/v1/stations?town_code=18` | 限單一行政區 |
+| GET | `/api/v1/stations/{uid}` | 單站基本資料 |
+| GET | `/api/v1/stations/{uid}/day` | **主要查詢**：9h 實況 + 3h 預測 + 風險判定（只讀 DB） |
+| POST | `/api/v1/predict` | 即時推論（會打 SageMaker，頁面已不使用） |
+
+```bash
+# day API
+curl -s "http://127.0.0.1:8000/api/v1/stations/NWT500218133/day" | python3 -m json.tool
+
+# 即時推論（at 可省略 = 該站最末格；is_holiday 可做 what-if）
+curl -s -X POST http://127.0.0.1:8000/api/v1/predict \
+  -H 'Content-Type: application/json' \
+  -d '{"station_uid":"NWT500218133"}' | python3 -m json.tool
+```
+
+---
+
+## 2. demo 回放模式
+
+```bash
+uv run python -m jobs.demo --status          # 虛擬時刻／回放進度
+uv run python -m jobs.demo --start           # 預載 4 月資料 + 設 demo 時鐘
+uv run python -m jobs.demo --start --reset   # ★ 先清乾淨再預載（重跑 demo 用）
+uv run python -m jobs.demo --stop            # 清時鐘與書籤（level30 保留）
+uv run python -m jobs.demo --stop --purge    # 連回放寫進 level30 的列一起刪
+```
+
+`--reset` 會清掉 demo 視窗（2026-04-01 ～ 2026-06-01）的回放列與預測列，
+只動 4~5 月，不碰真排程資料。
+
+### 虛擬時鐘
+
+| 設定 | 值 | 位置 |
+|---|---|---|
+| 起點 | `2026-05-01 08:00:00` | `config.DEMO_VIRTUAL_T0` |
+| 流速 | `5`（真實 1 分鐘 = 虛擬 5 分鐘） | `config.DEMO_SPEED` |
+
+⚠️ **改流速前必須先重新錨定** `demo_t0_virtual` / `demo_t0_real` 到當前虛擬時刻，
+否則 `now = t0v + 經過時間 × 速度` 會讓虛擬時間瞬間跳走。
+
+```bash
+# 看時鐘三鍵
+uv run python -m app.repository.sys_config_repo
+# 手動設一個鍵
+uv run python -m app.repository.sys_config_repo --set demo_t0_virtual '2026-05-01 09:00:00'
+```
+
+---
+
+## 3. 排程 job
+
+### tick（每分鐘輪詢，cron 的入口）
+
+```bash
+uv run python -m jobs.tick            # 兩條判定並執行
+uv run python -m jobs.tick --status   # 只印狀態，不做事
+uv run python -m jobs.tick --force    # 無視判定強制跑一輪
+```
+
+demo 模式下 tick 會走 **Job A′（replay_pull）**，並自動停用 Job C。
+
+### 手動跑單一 job
+
+```bash
+# Job A′：從 baseline_grid 搬一格到 level30（demo 回放用）
+uv run python -m jobs.replay_pull
+
+# Job B：批次預測，寫 forecast_history
+uv run python -m jobs.batch_predict                        # 全站
+uv run python -m jobs.batch_predict --limit 50             # 只跑 50 站
+uv run python -m jobs.batch_predict --slot '2026-05-01 20:30'
+uv run python -m jobs.batch_predict --dry-run              # 只組 payload 不打
+
+# Job A：拉 TDX 即時水位　★ demo 模式下有斷路器，會直接拒絕
+uv run python -m jobs.pull_realtime --dry-run
+
+# Job C：歷史 API 回補　★ 會扣 TDX 點數（月上限 150）
+uv run python -m jobs.backfill --status     # 只印判定與缺格率
+uv run python -m jobs.backfill --dry-run    # 印日期區間/URL，不真打
+uv run python -m jobs.backfill --days 3     # 縮小視窗
+
+# 站點主檔同步　★ 會打一次全量 TDX
+uv run python -m jobs.sync_stations --dry-run
+uv run python -m jobs.sync_stations --force-proxy   # 沒新站也重算代理
+```
+
+### 透過 wrapper 跑（有鎖、有 log、cron 也用這個）
+
+```bash
+bash jobs/run_job.sh tick
+bash jobs/run_job.sh batch_predict --limit 50
+# log：backend/logs/<job>-YYYY-MM-DD.log（保留 14 天）
+```
+
+### 讓排程持續跑
+
+```bash
+# 方式一：前景迴圈（關掉終端就停）
+while true; do bash jobs/run_job.sh tick; sleep 60; done
+
+# 方式二：crontab（macOS 需給 /usr/sbin/cron 完全磁碟取用權限）
+crontab -e   # 內容參考 jobs/crontab.txt
+```
+
+⚠️ 排程沒在跑 = 資料不會前進、不會有新預測。「為什麼沒有新預測」問過三次，
+每次都是這個原因。先用 `uv run python -m jobs.tick --status` 確認。
+
+---
+
+## 4. 資料庫
+
+PostgreSQL 17 跑在 podman 容器 `youbike-pg`（對外 port 5433，db `youbike`）。
+
+```bash
+# 容器狀態
+podman ps
+podman start youbike-pg
+
+# ★ podman machine 睡眠後常假死：list 顯示 running 但 socket 拒連
+podman machine stop && podman machine start && podman start youbike-pg
+
+# 進 psql
+podman exec -it youbike-pg psql -U youbike -d youbike
+
+# 單句查詢
+podman exec youbike-pg psql -U youbike -d youbike -qc "SELECT count(*) FROM hackathon_backend_station;"
+```
+
+### 常用查詢
+
+```sql
+-- 回放進度與時鐘
+SELECT * FROM sys_config ORDER BY key;
+
+-- 最近的 job 執行紀錄
+SELECT job, slot, status, note, created_at FROM job_run ORDER BY created_at DESC LIMIT 20;
+
+-- 最新一輪預測原點
+SELECT max(origin) FROM hackathon_backend_forecast_history;
+
+-- 某站的實況
+SELECT slot, avail, docks FROM hackathon_backend_level30
+ WHERE station_uid = 'NWT500218133' ORDER BY slot DESC LIMIT 20;
+```
+
+⚠️ `VACUUM` 不能包在交易裡 —— `psql -c` 塞多句會被包成一個交易而失敗，
+要一句一個 `-qc`：
+
+```bash
+for t in hackathon_backend_level30 hackathon_backend_forecast_history; do
+  podman exec youbike-pg psql -U youbike -d youbike -qc "VACUUM FULL ANALYZE $t;"
+done
+```
+
+---
+
+## 5. 建置腳本（SQL）
+
+```bash
+bash sql/10_restore_source.sh          # 從 dump 還原來源資料（很久）
+psql -f sql/20_backend_ddl.sql         # 建後端用的表
+bash sql/30_load_cat_map.sh            # ★ 灌 cat 對照表（換模型必跑）
+bash sql/31_load_proxy_cat.sh --verify # 只查代理現況，不寫 DB
+bash sql/31_load_proxy_cat.sh          # 重算鄰站代理
+```
+
+⚠️ **換模型時 `30_load_cat_map.sh` 是最危險的一步**：cat 編號由訓練時的字典序
+決定，錯了不會報錯 —— 每一站都拿到別站的預測，數字看起來完全合理。
+腳本已內建「先全清再灌」，掉出新對照表的站會回到 `cat = NULL`。
+
+---
+
+## 6. AWS SageMaker
+
+```bash
+uv run python aws/deploy_endpoint.py    # 建 endpoint（Model → Config → Endpoint）
+aws sagemaker describe-endpoint --endpoint-name youbike-deepar-demo2604 \
+  --region ap-northeast-1 --query 'EndpointStatus'
+```
+
+🔴 **demo 結束務必三連刪**（`ml.m5.large` 按時計費）：
+
+```bash
+aws sagemaker delete-endpoint        --endpoint-name  youbike-deepar-demo2604 --region ap-northeast-1
+aws sagemaker delete-endpoint-config --endpoint-config-name youbike-deepar-demo2604 --region ap-northeast-1
+aws sagemaker delete-model           --model-name     youbike-deepar-demo2604 --region ap-northeast-1
+```
+
+---
+
+## 7. git
+
+```bash
+git status --short
+git add -A && git commit -m "訊息"
+git log --oneline
+```
+
+⚠️ **只在 `backend/` 版控**（跟 `ml-deepar/`、`ml-xgboost/` 一樣各自一個 repo）。
+專案根目錄不可 `git init` —— `raw/` 21 GB、`data/` 298 MB、`.venv*` 595 MB。
+
+`.gitignore` 已擋掉 `.env`（TDX 憑證）、`.cache/`（token 快取）、`logs/`、`.venv/`。
+
+---
+
+## 8. 風險判定參數
+
+改 `app/config.py` 這三個值，前後端會一起跟著動（有 `--reload` 時不用重啟）：
+
+```python
+RISK_PCT, RISK_MIN, RISK_MAX = 0.15, 2, None
+# 門檻 T = max(2, int(0.15 × 車柱 + 0.5))，不封頂
+#   缺車：可借 <= T　／　滿站：可還 <= T
+```
+
+分級（時間制，看 q50）：
+
+| 等級 | 條件 |
+|---|---|
+| 高 | 現況實測已越線 **且** 近 1 小時（2 格）仍全部越線 |
+| 中 | 1 小時內會越線 |
+| 低 | 1～3 小時內會越線 |
+| 無 | 整段預測都不越線 |
+
+---
+
+## 9. 前端
+
+單站檢視頁：`meet/20260831/單站檢視.html`，用瀏覽器直接開（`file://`）。
+右上角可改 API 位址，預設 `http://127.0.0.1:8000`。
+
+顯示「離線」= 後端沒起來或 API 位址錯。

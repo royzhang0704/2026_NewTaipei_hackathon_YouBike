@@ -20,64 +20,87 @@ _TS = "%Y-%m-%d %H:%M:%S"
 ACTUAL_SLOTS = 18                     # 9 小時；加預測 6 格共 24 格 = 12 小時視圖
 
 
-_LEVEL = {0: "none", 1: "mid", 2: "high"}
+_LEVEL = {0: "none", 1: "low", 2: "mid", 3: "high"}
+NEAR = 2                              # 「近 1 小時」= 2 格（30 分 × 2）
 
 
 def threshold(cap: int | None) -> int | None:
-    """風險門檻 T（config §風險門檻）：clamp(10% × 車柱, 2, 5)。"""
+    """風險門檻 T（config §風險門檻）：15% × 車柱，下限 2、不封頂。
+    ★ 用 int(x+0.5) 不用 round()——Python 的 round 是銀行家捨入
+      （2.5→2、4.5→4），跟 SQL 統計對不起來，25/45 柱的站會差 1 台。"""
     if not cap:
         return None
-    return min(config.RISK_MAX, max(config.RISK_MIN,
-                                    round(config.RISK_PCT * cap)))
+    t = max(config.RISK_MIN, int(config.RISK_PCT * cap + 0.5))
+    return min(config.RISK_MAX, t) if config.RISK_MAX else t
 
 
-def _debounce(sevs: list[int]) -> list[int]:
-    """孤立的單格「高」降為「中」——30 分鐘的一格抖動不該升成高風險。"""
-    out = list(sevs)
-    for i, s in enumerate(sevs):
-        if s == 2:
-            prev = sevs[i - 1] if i > 0 else 0
-            nxt = sevs[i + 1] if i + 1 < len(sevs) else 0
-            if prev < 2 and nxt < 2:
-                out[i] = 1
-    return out
+def _side(cross: list[bool], now_crossed: bool, rows: list[dict],
+          origin_ts: str) -> dict:
+    """時間制分級（8/31 使用者定案，取代原本的分位制）——
+       等級講「多快會發生」，不是「多確定會發生」：
+         高  現況已越線，且近 1 小時仍越線（撐不過去）
+         中  近 1 小時內會越線（含現在越線但 1 小時內回穩）
+         低  1~3 小時內會越線
+         無  整段預測都不越線
+       ★ 越線一律看 q50（最可能路徑）。用 q19 太敏感（缺車觸發率會到 26%），
+         而且 q50 判定讓「同一格同時缺車又滿站」在數學上不可能發生
+         （q50 不能同時 <=T 又 >=cap-T，除非 cap<=2T，最小站 8 柱 > 4）。
+       ★ 高風險的第一個條件是**實測現況**，不是預測 —— 逐格 q* 尚未校準
+         （config.CAVEATS），最重的等級要靠最硬的證據。"""
+    near = cross[:NEAR]
+    if now_crossed and near and all(near):
+        lv = 3
+    elif any(near):
+        lv = 2
+    elif any(cross[NEAR:]):
+        lv = 1
+    else:
+        lv = 0
+    if lv == 3:
+        onset = origin_ts                       # 現在就已經越線
+    elif lv:
+        onset = rows[next(i for i, c in enumerate(cross) if c)]["at"].strftime(_TS)
+    else:
+        onset = None
+    return {"level": _LEVEL[lv], "onset": onset, "slots": sum(cross),
+            "by_slot": [int(c) for c in cross], "now_crossed": now_crossed}
 
 
-def _side(sevs: list[int], rows: list[dict]) -> dict:
-    """把逐格嚴重度收斂成一個判定：等級 + 最早發生時刻 + 持續格數。"""
-    g = _debounce(sevs)
-    lv = max(g) if g else 0
-    onset = next((rows[i]["at"].strftime(_TS)
-                  for i, s in enumerate(g) if s == lv), None) if lv else None
-    return {"level": _LEVEL[lv], "slots": sum(1 for s in g if s == lv) if lv else 0,
-            "onset": onset, "by_slot": g}
+def _confidence(rows: list[dict], cap: int, t: int, lend: bool) -> str:
+    """分位降級成「信心註記」—— 三分位本來就是嵌套的證據階梯。
+       缺車側 q19<=q50<=q90：連 q90 都越線 = 運氣好也缺 = 幾乎確定。
+       滿站側對稱（可還 = cap - avail，所以 q19 對應空位最多）。"""
+    if lend:
+        lo, mid, hi = "q90", "q50", "q19"
+        ok = lambda k: any(r[k] <= t for r in rows)          # noqa: E731
+    else:
+        lo, mid, hi = "q19", "q50", "q90"
+        ok = lambda k: any(cap - r[k] <= t for r in rows)    # noqa: E731
+    if ok(lo):
+        return "almost_certain"
+    if ok(mid):
+        return "likely"
+    if ok(hi):
+        return "possible"
+    return "none"
 
 
-def _risk(rows: list[dict], cap: int | None, cur: int | None) -> dict | None:
-    """風險判定（8/31 定案）—— 分級直接吃 DeepAR 的三分位，不再拉第二層門檻：
-         高  q50 越線（中位路徑就出事）
-         中  q19/q90 越線但 q50 沒有（帶的一端會出事）
-         無  整條帶都安全
-       滿站側用 q90（可借最多 = 可還最少）對稱判定。
-       ★ 只看路徑最嚴重點與最早發生時刻，不看終點值。"""
+def _risk(rows: list[dict], cap: int | None, cur: int | None,
+          origin_ts: str) -> dict | None:
     t = threshold(cap)
     if t is None:
         return None
-    short = [2 if r["q50"] <= t else (1 if r["q19"] <= t else 0) for r in rows]
-    full = [2 if cap - r["q50"] <= t else (1 if cap - r["q90"] <= t else 0)
-            for r in rows]
-    now_lv = 0
-    if cur is not None:
-        if cur <= t or cap - cur <= t:
-            now_lv = 2
-        elif cur <= 2 * t or cap - cur <= 2 * t:
-            now_lv = 1
-    out = {"threshold": t, "shortage": _side(short, rows), "full": _side(full, rows),
-           "now": {"level": _LEVEL[now_lv],
-                   "kind": None if cur is None else
-                           ("shortage" if cur <= cap - cur else "full")}}
-    lv = max(_LEVEL_N[out["shortage"]["level"]], _LEVEL_N[out["full"]["level"]])
-    out["overall"] = _LEVEL[lv]
+    sh = _side([r["q50"] <= t for r in rows],
+               cur is not None and cur <= t, rows, origin_ts)
+    fu = _side([cap - r["q50"] <= t for r in rows],
+               cur is not None and cap - cur <= t, rows, origin_ts)
+    sh["confidence"] = _confidence(rows, cap, t, True)
+    fu["confidence"] = _confidence(rows, cap, t, False)
+    out = {"threshold": t, "shortage": sh, "full": fu,
+           "overall": _LEVEL[max(_LEVEL_N[sh["level"]], _LEVEL_N[fu["level"]])]}
+    # 兩側都有事 = 路徑在 3 小時內從一端擺到另一端（潮汐站，調度看時機用）
+    if sh["level"] != "none" and fu["level"] != "none":
+        out["conflict"] = "swing"
     return out
 
 
@@ -124,7 +147,7 @@ def day_view(uid: str) -> dict:
         "now": {"at": h["anchor"].strftime(_TS), "avail": cur,
                 "free": (cap - cur) if (cap is not None and cur is not None) else None,
                 "carried": bool(actual and actual[-1].get("carried"))},
-        "risk": _risk(rows, cap, cur) if rows else None,
+        "risk": _risk(rows, cap, cur, h["anchor"].strftime(_TS)) if rows else None,
         "actual": actual,
         "forecast": [{"at": r["at"].strftime(_TS), "q19": float(r["q19"]),
                       "q50": float(r["q50"]), "q90": float(r["q90"])}
