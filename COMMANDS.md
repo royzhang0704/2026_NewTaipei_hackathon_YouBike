@@ -211,13 +211,28 @@ aws sagemaker describe-endpoint --endpoint-name youbike-deepar-demo2604 \
   --region ap-northeast-1 --query 'EndpointStatus'
 ```
 
-🔴 **demo 結束務必三連刪**（`ml.m5.large` 按時計費）：
+🔴 **demo 結束務必刪 endpoint**（`ml.m5.large` 按秒計費）：
 
 ```bash
-aws sagemaker delete-endpoint        --endpoint-name  youbike-deepar-demo2604 --region ap-northeast-1
-aws sagemaker delete-endpoint-config --endpoint-config-name youbike-deepar-demo2604 --region ap-northeast-1
-aws sagemaker delete-model           --model-name     youbike-deepar-demo2604 --region ap-northeast-1
+aws sagemaker delete-endpoint --endpoint-name youbike-deepar-demo2604 --region ap-northeast-1
+aws sagemaker list-endpoints --region ap-northeast-1     # 確認回空
 ```
+
+**只有 endpoint 計費。** endpoint-config 與 model 是中繼資料，零元，
+不必刪；模型檔放在 S3（全 bucket 36 物件 177 MB，每月不到 US$0.005）。
+要清理的話名字別抄錯 —— config 有 `-config` 後綴，model 沒有：
+
+```bash
+aws sagemaker delete-endpoint-config --endpoint-config-name youbike-deepar-demo2604-config --region ap-northeast-1
+aws sagemaker delete-model           --model-name           youbike-deepar-demo2604        --region ap-northeast-1
+```
+
+⚠️ 用 `&&` 串三段會斷在中間那段（8/31 實際踩過：endpoint 刪掉了、
+config 因名字不符失敗、model 因此也沒刪）。先跑 `list-endpoint-configs`
+`list-models` 確認名字再串。
+
+💡 費率查證不到 —— IAM user `charles-cli` 沒有 `pricing:GetProducts`
+權限，要看實際金額只能進 Billing Console / Cost Explorer。
 
 ---
 
