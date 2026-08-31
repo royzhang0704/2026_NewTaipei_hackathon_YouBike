@@ -12,9 +12,12 @@
 # ★ 該站還沒被批到（新站、無歷史、排程未跑）時：實況照給
 #   （錨點退回該站 level30 最末格），forecast 給空陣列 + 原因。
 # ════════════════════════════════════════════════════════════
+from math import ceil
+
 from app import config
 from app.errors import AppError
-from app.repository import baseline_repo, forecast_repo, history_repo, station_repo
+from app.repository import (baseline_repo, forecast_repo, history_repo,
+                            slot_average_repo, station_repo)
 
 _TS = "%Y-%m-%d %H:%M:%S"
 ACTUAL_SLOTS = 18                     # 9 小時；加預測 6 格共 24 格 = 12 小時視圖
@@ -85,8 +88,79 @@ def _confidence(rows: list[dict], cap: int, t: int, lend: bool) -> str:
     return "none"
 
 
+_URGENCY = {"high": "立即出車", "mid": "1 小時內出車", "low": "列入觀察"}
+_HOLD_HINT = "預計自行消退，暫不派車"
+
+
+def _safe_range(rows: list[dict], cap: int, t: int, lend: bool) -> int:
+    """退路：補／取到安全範圍 —— 門檻 − 路徑極值 + 1。
+       看極值不看當下，因為調度是一次性動作、之後水位仍會自己變動。"""
+    low = min((r["q50"] if lend else cap - r["q50"]) for r in rows)
+    return max(1, int(t - low) + 1)
+
+
+def _dispatch(sh: dict, fu: dict, rows: list[dict], cap: int, t: int,
+              avg: dict, anchor, cur: int | None) -> dict | None:
+    """把風險判定翻成調度動作（8/31 使用者定案）。
+       缺車 → 補車、滿站 → 取車；兩側都有事時取較嚴重的一邊。
+
+       台數＝下面兩個缺口取大的（basis="slot_average"）：
+         現況缺口   該時刻歷史平均 − 現在實測
+         窗內缺口   預測窗逐格「歷史平均 − q50」的平均
+       目標是回到這站這個時段的**常態水位**，不是剛好脫離紅區。
+       ★ 為什麼窗內取平均而不是只看窗尾：窗尾單格會被 origin 對齊的偶然綁架
+         （板橋站 1 號出口窗尾差 0.11 台就從補 6 台翻成不派車）。取平均後
+         會自己消退的格差距本來就趨近 0，不影響「只搬消退不掉的部分」。
+       ★ 為什麼要含現況：高風險的判定條件是**實測**已越線，台數卻只看預測，
+         會出現「現在 0 台卻說不用派車」。9/1 修掉的 bug。
+
+       查無歷史平均或樣本不足 → basis="threshold"，退回 _safe_range()。
+
+       hold：兩個缺口都 <= 0 = 現在沒事、預測掉下去也只是這站的正常作息。
+       ★ 但 level=high 一律不准 hold —— 高風險的定義就是現況已越線，
+         人現在就借不到車，不可能得到「不用去」的結論。此時改走安全範圍。
+
+       ★ hold 不影響風險燈號 —— 尖峰卡人的事實仍由 level／onset 誠實呈現。"""
+    ls, lf = _LEVEL_N[sh["level"]], _LEVEL_N[fu["level"]]
+    if max(ls, lf) == 0:
+        return None
+    lend = ls >= lf                          # 缺車較嚴重（同級時以缺車優先）
+    side = sh if lend else fu
+    act = "refill" if lend else "remove"
+
+    gaps = [(b["avg"] - r["q50"]) if lend else (r["q50"] - b["avg"])
+            for r in rows if (b := avg.get(r["at"])) is not None]
+    if not gaps:
+        return {"action": act, "bikes": _safe_range(rows, cap, t, lend),
+                "by": side["onset"], "urgency": side["level"],
+                "hint": _URGENCY[side["level"]], "basis": "threshold"}
+
+    need = sum(gaps) / len(gaps)
+    bn = avg.get(anchor)
+    now_gap = None
+    if cur is not None and bn is not None:
+        now_gap = (bn["avg"] - cur) if lend else (cur - bn["avg"])
+        need = max(need, now_gap)
+    bikes = ceil(need)
+
+    if bikes <= 0:
+        if side["level"] == "high":          # 現況已越線，不准說不用去
+            return {"action": act, "bikes": _safe_range(rows, cap, t, lend),
+                    "by": side["onset"], "urgency": "high",
+                    "hint": _URGENCY["high"], "basis": "threshold"}
+        return {"action": "hold", "bikes": 0, "by": side["onset"],
+                "urgency": side["level"], "hint": _HOLD_HINT,
+                "basis": "slot_average", "would": act,
+                "now_gap": round(now_gap, 2) if now_gap is not None else None}
+    return {"action": act, "bikes": bikes, "by": side["onset"],
+            "urgency": side["level"], "hint": _URGENCY[side["level"]],
+            "basis": "slot_average",
+            "now_gap": round(now_gap, 2) if now_gap is not None else None,
+            "window_gap": round(sum(gaps) / len(gaps), 2)}
+
+
 def _risk(rows: list[dict], cap: int | None, cur: int | None,
-          origin_ts: str) -> dict | None:
+          origin_ts: str, avg: dict, anchor) -> dict | None:
     t = threshold(cap)
     if t is None:
         return None
@@ -97,7 +171,10 @@ def _risk(rows: list[dict], cap: int | None, cur: int | None,
     sh["confidence"] = _confidence(rows, cap, t, True)
     fu["confidence"] = _confidence(rows, cap, t, False)
     out = {"threshold": t, "shortage": sh, "full": fu,
-           "overall": _LEVEL[max(_LEVEL_N[sh["level"]], _LEVEL_N[fu["level"]])]}
+           "overall": _LEVEL[max(_LEVEL_N[sh["level"]], _LEVEL_N[fu["level"]])],
+           # baseline = 現況那一格的常態水位（前端顯示「同時段常態 N 台」）
+           "baseline": round(avg[anchor]["avg"], 2) if anchor in avg else None,
+           "dispatch": _dispatch(sh, fu, rows, cap, t, avg, anchor, cur)}
     # 兩側都有事 = 路徑在 3 小時內從一端擺到另一端（潮汐站，調度看時機用）
     if sh["level"] != "none" and fu["level"] != "none":
         out["conflict"] = "swing"
@@ -138,6 +215,16 @@ def day_view(uid: str) -> dict:
 
     cap = st["capacity"]
     cur = actual[-1]["avail"] if actual else None
+
+    # 調度台數的基準：現況格 + 預測窗逐格的歷史同時段平均。
+    # 樣本不足的桶直接剔掉 —— 寧可退回門檻算法，也不要拿 n=3 的平均當目標。
+    anchor = h["anchor"]
+    avg = {}
+    if rows:
+        avg = {ts: v for ts, v in
+               slot_average_repo.series(uid, [r["at"] for r in rows] + [anchor]).items()
+               if v["n"] >= config.SLOT_AVG_MIN_N}
+
     out = {
         "station": {"uid": st["station_uid"], "name": st["station_name"],
                     "town_code": st["town_code"], "town": st["town"],
@@ -147,7 +234,7 @@ def day_view(uid: str) -> dict:
         "now": {"at": h["anchor"].strftime(_TS), "avail": cur,
                 "free": (cap - cur) if (cap is not None and cur is not None) else None,
                 "carried": bool(actual and actual[-1].get("carried"))},
-        "risk": _risk(rows, cap, cur, h["anchor"].strftime(_TS)) if rows else None,
+        "risk": _risk(rows, cap, cur, anchor.strftime(_TS), avg, anchor) if rows else None,
         "actual": actual,
         "forecast": [{"at": r["at"].strftime(_TS), "q19": float(r["q19"]),
                       "q50": float(r["q50"]), "q90": float(r["q90"])}
