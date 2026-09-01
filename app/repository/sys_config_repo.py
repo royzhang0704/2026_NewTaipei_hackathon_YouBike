@@ -24,6 +24,9 @@ K_LAST_TICK = "last_tick"
 # demo 回放模式（8/31）：兩鍵成對出現才生效，effective_now 以差值推算
 K_DEMO_T0_REAL = "demo_t0_real"        # demo 啟動時的真實時間
 K_DEMO_T0_VIRTUAL = "demo_t0_virtual"  # demo 啟動時的虛擬起點（2026-05-01）
+# 9/1 新增：讓回放能「只搬資料、跑到某一刻就停」，全程不碰 endpoint
+K_DEMO_UNTIL = "demo_until"            # 虛擬時鐘終點；到點停表（空 = 一路跑下去）
+K_REPLAY_PREDICT = "replay_predict"    # 回放要不要觸發 Job B（0 = 不打 endpoint）
 
 _TS = "%Y-%m-%d %H:%M:%S"
 
@@ -90,7 +93,13 @@ def effective_now() -> datetime:
     t0r, t0v = get_ts(K_DEMO_T0_REAL), get_ts(K_DEMO_T0_VIRTUAL)
     if t0r is not None and t0v is not None:
         real = datetime.now(TZ).replace(tzinfo=None)
-        return t0v + (real - t0r) * config.DEMO_SPEED
+        v = t0v + (real - t0r) * config.DEMO_SPEED
+        # ★ demo_until 夾在這裡而不是夾在 tick 的判定：只改一處，
+        #   tick 兩條判定、healthz 的 now/data_age 全都跟著一起停，
+        #   不會出現「時鐘走過頭但資料停住」的兩套現在。
+        #   到點後 expected == latest，tick 每輪安靜離開 = 卡在那裡。
+        until = get_ts(K_DEMO_UNTIL)
+        return min(v, until) if until is not None else v
     return datetime.now(TZ).replace(tzinfo=None)
 
 
@@ -104,6 +113,24 @@ def is_demo() -> bool:
     """demo 回放模式是否生效（兩鍵成對才算 —— 只設一鍵視為沒設）。"""
     return (get_ts(K_DEMO_T0_REAL) is not None
             and get_ts(K_DEMO_T0_VIRTUAL) is not None)
+
+
+def replay_predict() -> bool:
+    """demo 回放要不要觸發 Job B（打 endpoint）。
+
+    未設定時預設「要」—— 既有行為不因為新增這個鍵而改變。
+    ★ 設 0 是為了「已經有預測、只想重播一次」的場合。
+      不要改用 ENDPOINT_MOCK=1 達成同一件事：batch_predict 寫入是
+      ON CONFLICT DO UPDATE，mock 會逐格覆蓋掉既有的真預測。
+    """
+    v = get(K_REPLAY_PREDICT)
+    return True if v is None else v.strip() not in ("0", "false", "off", "no")
+
+
+def demo_ended() -> bool:
+    """demo 回放是否已經走到 demo_until（時鐘停表中）。純粹給輸出加註用。"""
+    until = get_ts(K_DEMO_UNTIL)
+    return until is not None and is_demo() and effective_now() >= until
 
 
 def scheduler_on() -> bool:
@@ -126,10 +153,12 @@ if __name__ == "__main__":
         print(f"已設定 {k} = {v if v != '-' else '(清空)'}")
 
     tag = ("  ⚠⚠ 靜態虛擬時間生效中（排程會停在這裡，用完請清掉）" if is_virtual()
+           else "  ⏸ demo 已走到 demo_until，時鐘停表中" if demo_ended()
            else f"  ▶ demo 回放中（×{config.DEMO_SPEED:g}）" if is_demo()
            else "  （真實時間）")
     print(f"\n有效 now = {effective_now()}{tag}")
-    print(f"排程開關 = {'開' if scheduler_on() else '關'}\n")
+    print(f"排程開關 = {'開' if scheduler_on() else '關'}"
+          f"｜回放觸發 Job B = {'是' if replay_predict() else '否（不打 endpoint）'}\n")
     for r in all_rows():
         print(f"  {r['key']:14} {str(r['value'] or '(未設定)'):22} "
               f"{r['updated_at'].astimezone(TZ):%m-%d %H:%M:%S}")

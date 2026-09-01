@@ -117,11 +117,16 @@ def status() -> int:
     now = sc.effective_now()
     cur_slot = sc.get_ts(sc.K_CURRENT_SLOT)
     fe = sc.get_ts(sc.K_FORECAST_END)
+    until = sc.get_ts(sc.K_DEMO_UNTIL)
     mode = ("靜態 virtual_now（時鐘不走！）" if sc.is_virtual()
+            else f"demo 回放（×{config.DEMO_SPEED:g}）⏸ 已到終點，時鐘停表中"
+                 if sc.demo_ended()
             else f"demo 回放（×{config.DEMO_SPEED:g}）" if sc.is_demo()
             else "真實時間（demo 未啟動）")
     print(f"模式       {mode}")
     print(f"有效 now   {now}")
+    print(f"回放終點   {until or '(無，一路跑下去)'}")
+    print(f"觸發 Job B {'是' if sc.replay_predict() else '否（不打 endpoint）'}")
     print(f"回放到     {cur_slot or '(無)'}")
     print(f"預測終點   {fe or '(無)'}")
     with get_conn().cursor() as cur:

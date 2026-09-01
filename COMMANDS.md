@@ -15,6 +15,9 @@ cd /Volumes/myPro/codes/race/youbike-hackathon/backend
 # 啟動（--reload = 改 code 自動重載，開發時建議帶）
 uv run uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
 
+# ★ demo 回放中要帶 DEMO_SPEED（與 tick 同值）——理由見 §2「流速的坑」
+DEMO_SPEED=30 uv run uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
+
 # 停掉正在跑的
 pkill -f "uvicorn app.main:app"
 
@@ -53,13 +56,47 @@ curl -s -X POST http://127.0.0.1:8000/api/v1/predict \
 ```bash
 uv run python -m jobs.demo --status          # 虛擬時刻／回放進度
 uv run python -m jobs.demo --start           # 預載 4 月資料 + 設 demo 時鐘
-uv run python -m jobs.demo --start --reset   # ★ 先清乾淨再預載（重跑 demo 用）
+uv run python -m jobs.demo --start --reset   # ★ 先清乾淨再預載（會刪掉既有預測，見下）
 uv run python -m jobs.demo --stop            # 清時鐘與書籤（level30 保留）
 uv run python -m jobs.demo --stop --purge    # 連回放寫進 level30 的列一起刪
 ```
 
 `--reset` 會清掉 demo 視窗（2026-04-01 ～ 2026-06-01）的回放列與預測列，
 只動 4~5 月，不碰真排程資料。
+
+⚠️ **`--reset` 會刪掉 `forecast_history` 的 4~5 月列。**
+已經花錢跑好的預測要留著重播，就用不帶 `--reset` 的 `--start`。
+
+### 純重播：不打 endpoint、跑到某一刻停表（9/1 新增）
+
+已經有整段預測、只想再放一次給人看時用。全程零 endpoint 開銷。
+
+| 鍵 | 值 | 作用 |
+|---|---|---|
+| `replay_predict` | `0` | Job A′ 只搬 `baseline_grid`，**不觸發 Job B** |
+| `demo_until` | 時刻 | `effective_now()` 到點就夾住，時鐘停表 |
+
+兩鍵未設定 = 維持原本行為（會觸發 Job B、一路跑下去）。
+
+```bash
+uv run python -m app.repository.sys_config_repo --set virtual_now -            # ① 靜態時鐘優先序比 demo 高，不清起不來
+uv run python -m app.repository.sys_config_repo --set replay_predict 0         # ② 不打 endpoint
+uv run python -m app.repository.sys_config_repo --set demo_until '2026-05-02 00:00:00'
+uv run python -m jobs.demo --start                                            # ③ ★ 不可加 --reset
+uv run python -m app.repository.sys_config_repo --set forecast_end '2026-05-02 03:00:00'   # ④ Job B 不跑就沒人寫它
+uv run python -m app.repository.sys_config_repo --set scheduler_on 1           # ⑤
+export DEMO_SPEED=30 && while true; do bash jobs/run_job.sh tick; sleep 60; done   # ⑥
+```
+
+④ 的值 = 最末 origin + 6 格（30 分一格）。不設的話 `/healthz` 的
+`forecast_left_min` 會是 null。
+
+到終點後 `--status` 的模式那行會變成 `⏸ 已到終點，時鐘停表中`，
+tick 每輪判定不落後、安靜離開。
+
+⚠️ **不要改用 `ENDPOINT_MOCK=1` 達成「不打 endpoint」**：
+`batch_predict.py` 寫入是 `ON CONFLICT DO UPDATE`，mock 預測會逐格
+覆蓋掉既有的真預測。
 
 ### 虛擬時鐘
 
@@ -70,6 +107,22 @@ uv run python -m jobs.demo --stop --purge    # 連回放寫進 level30 的列一
 
 ⚠️ **改流速前必須先重新錨定** `demo_t0_virtual` / `demo_t0_real` 到當前虛擬時刻，
 否則 `now = t0v + 經過時間 × 速度` 會讓虛擬時間瞬間跳走。
+
+#### ⚠️ 流速的坑：`DEMO_SPEED` 是環境變數，不是 DB 鍵
+
+每個進程各讀各的。`export DEMO_SPEED=30` 只對那個 shell 底下的 tick 生效 ——
+uvicorn、另開終端下的 `--status`、crontab 跑的 tick，全都會退回預設 `5`，
+**同一個 DB 卻算出差好幾倍的「現在」**，前端看起來就像卡住不動。
+
+demo 期間每個要問「現在幾點」的進程都得帶同一個值：
+
+```bash
+DEMO_SPEED=30 uv run uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
+DEMO_SPEED=30 uv run python -m jobs.demo --status
+export DEMO_SPEED=30 && while true; do bash jobs/run_job.sh tick; sleep 60; done
+```
+
+（crontab 讀不到 shell 的 export —— 要調流速跑 demo，用前景迴圈，別用 cron。）
 
 ```bash
 # 看時鐘三鍵
@@ -91,6 +144,9 @@ uv run python -m jobs.tick --force    # 無視判定強制跑一輪
 ```
 
 demo 模式下 tick 會走 **Job A′（replay_pull）**，並自動停用 Job C。
+`--status` 在 demo 中會多印「回放終點」與「回放觸發 JobB」兩行。
+
+`sys_config.replay_predict = 0` 時 Job A′ 不觸發 Job B（見 §2 純重播）。
 
 ### 手動跑單一 job
 

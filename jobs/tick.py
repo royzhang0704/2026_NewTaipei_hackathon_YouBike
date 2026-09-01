@@ -82,6 +82,9 @@ def status() -> dict:
         "due": latest is None or expected > latest,
         "virtual": sc.is_virtual(),
         "demo": demo,
+        "demo_until": sc.get_ts(sc.K_DEMO_UNTIL),
+        "ended": sc.demo_ended(),
+        "replay_predict": sc.replay_predict(),
         "on": sc.scheduler_on(),
     }
 
@@ -96,6 +99,7 @@ def main() -> int:
 
     if a.status:
         warn = ("  ⚠⚠ 靜態虛擬時間生效中（排程會停在這裡）" if s["virtual"]
+                else "  ⏸ 已走到 demo_until，時鐘停表中" if s["ended"]
                 else f"  ▶ demo 回放中（×{config.DEMO_SPEED:g}）" if s["demo"] else "")
         print(f"有效 now      {s['now']}{warn}")
         print(f"應該拉到      {s['expected']}")
@@ -103,6 +107,9 @@ def main() -> int:
         left = f"　還剩 {s['forecast_left']}" if s["forecast_left"] else ""
         print(f"實際拉到      {s['latest'] or '(無)'}{behind}")
         print(f"預測終點      {s['forecast_end'] or '(無)'}{left}")
+        if s["demo"]:
+            print(f"回放終點      {s['demo_until'] or '(無，一路跑下去)'}")
+            print(f"回放觸發 JobB {'是' if s['replay_predict'] else '否（不打 endpoint）'}")
         print(f"排程開關      {'開' if s['on'] else '關'}")
         print(f"判定①拉當下  {'該補拉' if s['due'] else '不用動'}")
         print(f"判定②補歷史  {'該觸發 Job C' if s['backfill_due'] else '不觸發'}"
@@ -141,7 +148,10 @@ def main() -> int:
                   + ("連中間的洞一併回放" if s["demo"]
                      else "只補當下這一格，中間的洞交給判定②的 Job C"))
         if s["demo"]:
-            ok, msg = replay_pull.run(s["expected"], since=s["latest"])
+            # ★ trigger 交給 sys_config.replay_predict 決定 —— 已經有預測、
+            #   只想重播一次時設 0，Job A′ 只搬 baseline_grid，不打 endpoint
+            ok, msg = replay_pull.run(s["expected"], since=s["latest"],
+                                      trigger=s["replay_predict"])
             print(f"── Job A′ 結束：{'成功' if ok else '未成功'} {msg}")
         else:
             ok, msg = pull_realtime.run(s["expected"])

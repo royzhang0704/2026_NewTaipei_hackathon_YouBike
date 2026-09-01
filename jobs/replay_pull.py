@@ -94,6 +94,10 @@ def run(slot: datetime, trigger: bool = True,
                 print(f"   {batch_predict.run(slot)}")
             except Exception as e:      # Job B 的失敗不該蓋掉 Job A′ 的成功
                 print(f"   Job B 失敗（已記在它自己那列）：{type(e).__name__}: {e}")
+        else:
+            # sys_config.replay_predict = 0：重播既有預測，不打 endpoint。
+            # 一定要印 —— 否則 log 上看不出這一格「為什麼沒有預測」
+            print(f"── 跳過 Job B（replay_predict=0，沿用既有 origin={slot} 的預測）")
         return True, f"stations_ok={n_grid}"
 
     except Exception as e:
