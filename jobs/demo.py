@@ -4,6 +4,8 @@
 #
 #   uv run python -m jobs.demo --start    # 預載 4 月 + 設 demo 時鐘
 #   uv run python -m jobs.demo --start --reset  # ★ 先清乾淨再預載（demo 重跑用）
+#     ★ --reset 清四張表：level30／forecast_history／risk_snapshot／forecast_run。
+#       主檔（forecast_run）漏清 = 冪等判定說「已預測過」→ tick 整輪跳過 → 畫面空白。
 #   uv run python -m jobs.demo --status   # 虛擬時刻／回放進度
 #   uv run python -m jobs.demo --stop     # 清時鐘與書籤（level30 保留）
 #   uv run python -m jobs.demo --stop --purge  # 連回放進 level30 的列一起刪
@@ -56,8 +58,21 @@ def start(reset: bool = False) -> int:
                         "WHERE origin >= %s AND origin < '2026-06-01'",
                         (config.DEMO_PRELOAD_FROM,))
             n_fc = cur.rowcount
+            # ★★ 主檔與風險快照一定要跟著清（9/1）——
+            #   不清主檔的下場：reset 完了，主檔那些 origin 還寫著
+            #   predict_status='done'，tick 一跑冪等判定會**整輪跳過**，
+            #   demo 畫面整片空白。這是這組改動最容易踩的坑。
+            cur.execute("DELETE FROM hackathon_backend_risk_snapshot "
+                        "WHERE origin >= %s AND origin < '2026-06-01'",
+                        (config.DEMO_PRELOAD_FROM,))
+            n_rk = cur.rowcount
+            cur.execute("DELETE FROM hackathon_backend_forecast_run "
+                        "WHERE origin >= %s AND origin < '2026-06-01'",
+                        (config.DEMO_PRELOAD_FROM,))
+            n_fr = cur.rowcount
         print(f"── reset：清 level30 {n_lv:,} 列（4~5 月）"
-              f"＋ forecast_history {n_fc:,} 列（demo 視窗 origin）")
+              f"＋ forecast_history {n_fc:,} 列（demo 視窗 origin）"
+              f"＋ risk_snapshot {n_rk:,} 列 ＋ forecast_run {n_fr:,} 列")
 
     t0v = datetime.fromisoformat(config.DEMO_VIRTUAL_T0)
     last_slot = t0v - STEP                      # 起點前一格

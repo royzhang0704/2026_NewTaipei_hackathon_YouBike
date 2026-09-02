@@ -29,3 +29,27 @@ def series(station_uid: str, ts_list: list[datetime]) -> dict[datetime, dict]:
             (*ts_list, station_uid))
         return {r["ts"]: {"avg": float(r["avg_avail"]), "n": r["n"]}
                 for r in cur.fetchall()}
+
+
+def series_all(ts_list: list[datetime]) -> dict[tuple[str, datetime], dict]:
+    """批次版：一次取**全站** × 多個時刻，回 {(station_uid, ts): {"avg", "n"}}。
+
+    給 Job B 的風險判定用（全市 1,538 站 × 7 個時刻 ≈ 1 萬列，一次 round-trip）。
+    ★ 不可改用逐站呼叫 series() —— 1,538 次 round-trip 會把批次跑成龜速。
+    join 條件與單站版逐字相同（同樣必須逐格帶日期，預測窗會跨午夜）。
+    查無的桶不會出現在結果裡，樣本數過濾交給呼叫端（config.SLOT_AVG_MIN_N）。
+    """
+    if not ts_list:
+        return {}
+    vals = ", ".join(["(%s::timestamp)"] * len(ts_list))
+    with get_conn().cursor() as cur:
+        cur.execute(
+            f"WITH want(ts) AS (VALUES {vals}) "
+            "SELECT a.station_uid, w.ts, a.avg_avail, a.n "
+            "FROM want w "
+            "JOIN hackathon_backend_calendar c ON c.d = w.ts::date "
+            "JOIN hackathon_backend_station_slot_average a "
+            "  ON a.is_holiday = c.is_holiday AND a.tod = w.ts::time",
+            tuple(ts_list))
+        return {(r["station_uid"], r["ts"]): {"avg": float(r["avg_avail"]), "n": r["n"]}
+                for r in cur.fetchall()}

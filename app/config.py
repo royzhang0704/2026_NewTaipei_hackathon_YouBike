@@ -186,6 +186,15 @@ RISK_PCT, RISK_MIN, RISK_MAX = 0.15, 2, None
 #   樣本數不足或查無該桶時退回原本的門檻算法（補到 T+1 = 安全範圍）。
 SLOT_AVG_MIN_N = 10
 
+# ── 風險判定的演算法版本（9/1）──
+#   寫進 risk_snapshot.algo_ver 與 forecast_run.risk_algo_ver。
+#   ★ 改門檻（RISK_PCT/MIN/MAX）或改分級規則（risk_service）就要改這個字串：
+#     ① 冪等判定會失效 → 舊 origin 會被重判（--risk-only，不打 SageMaker）
+#     ② streak 隨即重新起算 —— 跨版本的「連續 N 輪」沒有意義
+#   格式：<分級制>/<門檻參數>。time-v1 = 8/31 定案的時間制分級
+#   （高=現況已越線且近 1 小時仍越線／中=1HR 內／低=1~3HR 內／無=不越線）。
+RISK_ALGO_VER = "time-v1/pct15"
+
 # ── Job C 的四道判定（計劃-排程自癒 §1 ②，由便宜到貴）──
 #   a 今日尚未有 backfill success   b 失敗退避   c 08:00   d 缺格率
 BACKFILL_WINDOW_DAYS = 10       # 缺格偵測與回補的視窗（= seed 天數，理由見計劃 §2）

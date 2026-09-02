@@ -42,6 +42,24 @@ def tail(station_uid: str, at: datetime | None = None,
     return {"start": start, "anchor": anchor, "first_slot": first_slot, "values": values}
 
 
+
+def anchor_all(at: datetime) -> dict[str, dict]:
+    """批次版：全站在 at 當下的「現況可借量」，回 {uid: {"slot", "avail"}}。
+
+    給 Job B 的風險判定用（風險等級最重的那一級靠的是**實測現況**）。
+    取 slot <= at 且 avail 非 NULL 的最末一格 —— 等於 day_view 的
+    carry-forward 語意：回傳的 slot < at 就是「延用前值」（now_carried）。
+    ★ 一次 round-trip；逐站呼叫 tail() 是 1,538 次，不可以。
+    """
+    with get_conn().cursor() as cur:
+        cur.execute(
+            "SELECT DISTINCT ON (station_uid) station_uid, slot, avail "
+            "  FROM hackathon_backend_level30 "
+            " WHERE slot <= %s AND avail IS NOT NULL "
+            " ORDER BY station_uid, slot DESC", (at,))
+        return {r["station_uid"]: {"slot": r["slot"], "avail": r["avail"]}
+                for r in cur.fetchall()}
+
 if __name__ == "__main__":            # 驗證：計劃-後端服務.md §8
     import argparse
     p = argparse.ArgumentParser()
