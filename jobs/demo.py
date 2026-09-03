@@ -2,21 +2,26 @@
 # jobs/demo.py —— demo 回放模式的開關
 # 規格：meet/20260831/計劃-demo回放模式與重訓.md §2-2
 #
-#   uv run python -m jobs.demo --start    # 預載 4 月 + 設 demo 時鐘
-#   uv run python -m jobs.demo --start --reset  # ★ 先清乾淨再預載（demo 重跑用）
-#     ★ --reset 清四張表：level30／forecast_history／risk_snapshot／forecast_run。
+#   uv run python -m jobs.demo --start    # 設 demo 時鐘
+#   uv run python -m jobs.demo --start --reset  # ★ 先清預測再起跑（demo 重跑用）
+#     ★ --reset 清三張表：forecast_history／risk_snapshot／forecast_run。
 #       主檔（forecast_run）漏清 = 冪等判定說「已預測過」→ tick 整輪跳過 → 畫面空白。
 #   uv run python -m jobs.demo --status   # 虛擬時刻／回放進度
-#   uv run python -m jobs.demo --stop     # 清時鐘與書籤（level30 保留）
-#   uv run python -m jobs.demo --stop --purge  # 連回放進 level30 的列一起刪
+#   uv run python -m jobs.demo --stop     # 清時鐘與書籤
 #
-# --start 做四件事：
-#   ① 預載 2026-04 整月 baseline_grid → level30（給足 48 格 context，
-#      前端也能看整個 4 月的歷史曲線）
-#   ② demo_t0_real = 現在、demo_t0_virtual = 2026-05-01 00:00
-#   ③ current_slot = 2026-04-30 23:30 —— ★ 必要：殘留的真排程書籤
+# ★★ 2026-09-02：本檔不再碰 level30（預載與 --purge 都移除了）。
+#   出處：meet/20260902/計劃-level30灌歷史與無限carry.md 決策 13。
+#   理由：level30 的 04~07 月是「歷史真相的重採樣」，不是 demo 產生的狀態
+#   —— reset demo 不該動它。單一出處改成 backend/sql/43_level30_carry.sql，
+#   要重建就跑那支（它自己 DELETE 04-01~08-01 再全量重灌，冪等）。
+#   ⚠ 舊 --reset 的附帶效益「把誤混進 level30 的非 baseline_grid 來源列
+#     一併清掉」沒有遺失 —— 43 的 DELETE + 全量重灌提供同樣的保證。
+#
+# --start 做三件事：
+#   ① demo_t0_real = 現在、demo_t0_virtual = 2026-05-01 00:00
+#   ② current_slot = 2026-04-30 23:30 —— ★ 必要：殘留的真排程書籤
 #      比虛擬 now 晚，不重設 tick 會判定「不落後」永遠不動
-#   ④ 清 forecast_end（那是真排程的預測終點，對虛擬時間軸是謊言）
+#   ③ 清 forecast_end（那是真排程的預測終點，對虛擬時間軸是謊言）
 #
 # --stop 清 demo 兩鍵 + current_slot + forecast_end + virtual_now（保險）。
 #   ★ current_slot 清掉後 tick 會回頭問 level30 的 max(slot)，
@@ -44,16 +49,12 @@ def start(reset: bool = False) -> int:
         return 1
 
     if reset:
-        # demo 重跑：清掉上一輪的回放列與預測，回到全新起跑線。
+        # demo 重跑：清掉上一輪的預測，回到全新起跑線。
         # ★ 只清 demo 視窗（4~5 月）—— 真排程寫的 2026-08 之後不碰，
         #   舊 MOCK／真排程預測列（origin 在 8 月）也不碰（D2 定案保留）。
-        #   附帶效益：誤混進 level30 的非 baseline_grid 來源列一併清掉，
-        #   重載後來源純化為 baseline_grid 單一出處。
+        # ★★ 9/2 起 level30 不在這裡清（決策 13）。要重建歷史區請跑
+        #     backend/sql/43_level30_carry.sql —— 它才是那段的單一出處。
         with get_conn().transaction(), get_conn().cursor() as cur:
-            cur.execute("DELETE FROM hackathon_backend_level30 "
-                        "WHERE slot >= %s AND slot < '2026-06-01'",
-                        (config.DEMO_PRELOAD_FROM,))
-            n_lv = cur.rowcount
             cur.execute("DELETE FROM hackathon_backend_forecast_history "
                         "WHERE origin >= %s AND origin < '2026-06-01'",
                         (config.DEMO_PRELOAD_FROM,))
@@ -70,30 +71,26 @@ def start(reset: bool = False) -> int:
                         "WHERE origin >= %s AND origin < '2026-06-01'",
                         (config.DEMO_PRELOAD_FROM,))
             n_fr = cur.rowcount
-        print(f"── reset：清 level30 {n_lv:,} 列（4~5 月）"
-              f"＋ forecast_history {n_fc:,} 列（demo 視窗 origin）"
-              f"＋ risk_snapshot {n_rk:,} 列 ＋ forecast_run {n_fr:,} 列")
+        print(f"── reset：清 forecast_history {n_fc:,} 列（demo 視窗 origin）"
+              f"＋ risk_snapshot {n_rk:,} 列 ＋ forecast_run {n_fr:,} 列"
+              f"（★ level30 不動，歷史區的出處是 sql/43_level30_carry.sql）")
 
     t0v = datetime.fromisoformat(config.DEMO_VIRTUAL_T0)
     last_slot = t0v - STEP                      # 起點前一格
 
-    print(f"── 預載 {config.DEMO_PRELOAD_FROM} ~ {last_slot} baseline_grid → level30")
-    with get_conn().transaction(), get_conn().cursor() as cur:
-        cur.execute(
-            """
-            INSERT INTO hackathon_backend_level30
-                   (station_uid, slot, avail, docks, is_observed)
-            SELECT station_uid, slot, avail, docks, is_observed
-              FROM baseline_grid
-             WHERE slot >= %s AND slot <= %s AND avail IS NOT NULL
-            ON CONFLICT (station_uid, slot) DO UPDATE SET
-                   avail = EXCLUDED.avail,
-                   docks = EXCLUDED.docks,
-                   is_observed = EXCLUDED.is_observed,
-                   is_imputed = 0
-            """, (config.DEMO_PRELOAD_FROM, last_slot))
-        n = cur.rowcount
-    print(f"   {n:,} 列")
+    # ★ 9/2 起不預載（決策 13）。改成起跑前先確認 43 灌過了 —— 少了這一步
+    #   tail() 抓不到 48 格，每站都 INSUFFICIENT_HISTORY，而且安靜無 log。
+    with get_conn().cursor() as cur:
+        cur.execute("SELECT count(*) AS n FROM hackathon_backend_level30 "
+                    "WHERE slot > %s AND slot <= %s",
+                    (last_slot - STEP * config.CONTEXT, last_slot))
+        n_ctx = cur.fetchone()["n"]
+    if n_ctx == 0:
+        print(f"✗ level30 在 {last_slot} 之前的 {config.CONTEXT} 格 context 是空的。")
+        print("  先跑： PGPASSWORD=postgres psql -h 127.0.0.1 -p 5433 -U postgres "
+              "-d youbike -v ON_ERROR_STOP=1 -f backend/sql/43_level30_carry.sql")
+        return 1
+    print(f"── context 檢查：{last_slot} 之前 {config.CONTEXT} 格內有 {n_ctx:,} 列")
 
     t0r = datetime.now(TZ).replace(tzinfo=None)
     sc.set(sc.K_DEMO_T0_REAL, t0r)
@@ -106,7 +103,7 @@ def start(reset: bool = False) -> int:
     return 0
 
 
-def stop(purge: bool) -> int:
+def stop() -> int:
     if not sc.is_demo():
         print("（demo 未在進行，仍照清一遍鍵值）")
     for k in (sc.K_DEMO_T0_REAL, sc.K_DEMO_T0_VIRTUAL,
@@ -114,16 +111,10 @@ def stop(purge: bool) -> int:
         sc.set(k, None)
     print("✓ 已清 demo_t0_real / demo_t0_virtual / current_slot / forecast_end / virtual_now")
 
-    if purge:
-        # 只刪回放範圍（4~5 月）—— 真排程寫的 2026-08 之後不碰
-        with get_conn().transaction(), get_conn().cursor() as cur:
-            cur.execute("DELETE FROM hackathon_backend_level30 "
-                        "WHERE slot >= %s AND slot < '2026-06-01'",
-                        (config.DEMO_PRELOAD_FROM,))
-            print(f"✓ 已刪 level30 回放列 {cur.rowcount:,} 列（4~5 月）")
-    else:
-        print("  level30 的回放列保留（要清加 --purge；forecast_history 一律保留，"
-              "model_job 欄可區分）")
+    # ★ 9/2 起 --purge 已移除（決策 13）：level30 不歸本檔管。
+    #   要重建歷史區跑 sql/43_level30_carry.sql，它自己會 DELETE 再重灌。
+    print("  level30 不動（歷史區的出處是 sql/43_level30_carry.sql；"
+          "forecast_history 一律保留，model_job 欄可區分）")
     print("  真排程下一輪 tick 會自己對時補拉")
     return 0
 
@@ -168,15 +159,13 @@ def main() -> int:
     g.add_argument("--start", action="store_true")
     g.add_argument("--stop", action="store_true")
     g.add_argument("--status", action="store_true")
-    ap.add_argument("--purge", action="store_true",
-                    help="與 --stop 併用：連 level30 的回放列（4~5 月）一起刪")
     ap.add_argument("--reset", action="store_true",
-                    help="與 --start 併用：先清回放列與 demo 視窗的預測再預載（重跑）")
+                    help="與 --start 併用：先清 demo 視窗的預測再起跑（重跑）")
     a = ap.parse_args()
     if a.start:
         return start(a.reset)
     if a.stop:
-        return stop(a.purge)
+        return stop()
     return status()
 
 

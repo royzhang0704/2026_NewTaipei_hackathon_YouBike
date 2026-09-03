@@ -44,7 +44,11 @@ CAVEATS = ["q=0.19 為 H=4 校準值；H=6 逐格 q* 尚未校準，下界偏鬆
 #     改完 config 記得重啟 uvicorn（tick 每輪新 process 會自動吃到新值）。
 DEMO_SPEED = float(os.environ.get("DEMO_SPEED", "5"))
 DEMO_VIRTUAL_T0 = "2026-05-01 08:00:00"   # 虛擬時間起點（8/31 使用者定案：早上八點開場）
-DEMO_PRELOAD_FROM = "2026-04-01"          # --start 預載 level30 的起日（給足 context）
+# ★ 2026-09-02：名字還叫 PRELOAD 但已經不預載了（決策 13，demo.py 不再碰
+#   level30）。現在它的角色是「demo 視窗的下界」—— --reset 清
+#   forecast_history / risk_snapshot / forecast_run 與 --status 統計都用它。
+#   沒改名是因為三處引用都還在用，改名的收益不抵風險；語意以這段註解為準。
+DEMO_PRELOAD_FROM = "2026-04-01"          # demo 視窗下界（歷史區由 sql/43 灌）
 
 # mock 模式：不開 endpoint 也能串通鏈路。mock 的數字沒有意義，
 # 回應會帶 "mock": true —— 只驗鏈路不驗預測。

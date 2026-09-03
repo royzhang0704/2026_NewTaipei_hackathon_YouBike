@@ -13,6 +13,13 @@
 #        level30 並標 is_imputed=1（值落表，使用者定案改的）；
 #        上週也缺就保持 null。本層只負責把 imputed_slots / missing_slots
 #        誠實寫進回應，不自己再補一次。
+#      └ ★ 9/2 再擴充（計劃-level30灌歷史與無限carry.md 決策 2/11）：
+#        43_level30_carry.sql 把 04-01~08-01 的洞**全部**無限 carry 掉，
+#        標 is_imputed=2。所以在那段區間規則 4 的「缺格」已經不存在了，
+#        missing_slots 恆為 0 —— 唯一還說得出可信度的是新增的
+#        carried_slots。三個數字分開報，不合併。
+#        ⚠ 代價已知並照收：站台斷訊與水位真的沒動在資料層分不開了
+#        （meet/20260901/現況-斷訊站處理決策.md 的提案 C）。
 # ════════════════════════════════════════════════════════════
 from datetime import datetime, timedelta
 
@@ -30,7 +37,8 @@ def build_payload(station_uid: str, at: datetime | None = None,
     抽成獨立函式的原因：冒煙測試的 smoke_payload.json 必須跟後端
     真正送出去的是同一份 —— 同一段程式碼，不是第二份組裝邏輯。
     回傳 {"payload", "station", "history", "cat", "proxy",
-          "imputed_slots"(週期補值格數), "missing_slots"(仍為 null 的格數)}。"""
+          "imputed_slots"(週期補值格數), "carried_slots"(無限 carry 格數),
+          "missing_slots"(仍為 null 的格數)}。"""
     # 1. 站與 cat（含鄰站代理）
     st = station_repo.find(station_uid)
     if st is None:
@@ -62,9 +70,16 @@ def build_payload(station_uid: str, at: datetime | None = None,
     #   服務層再補一次就是第二份邏輯，兩邊遲早長歪。
     #   這裡只負責「說清楚讀到的是什麼」：
     #     imputed_slots  取一週前同 slot 補的格（有值，但不是實測）
+    #     carried_slots  無限 carry 延用前值的格（is_imputed=2）
     #     missing_slots  連上週也沒有，仍是 null 的格
+    #
+    # ★ 2026-09-02：carried_slots 是新增的，而且它現在是主力訊號 ——
+    #   43_level30_carry.sql 把 4~7 月的洞全部 carry 掉之後，那段區間的
+    #   missing_slots **恆為 0**，光看它會以為 48 格全是真值。
+    #   出處：meet/20260902/計劃-level30灌歷史與無限carry.md 決策 11。
     values = h["values"]
     imputed = hist_repo.imputed_count(station_uid, h["start"], h["anchor"])
+    carried = hist_repo.carried_count(station_uid, h["start"], h["anchor"])
     n_missing = sum(v is None for v in values)
 
     # 3. 54 格 is_holiday（覆寫 = what-if）
@@ -89,7 +104,7 @@ def build_payload(station_uid: str, at: datetime | None = None,
     }
     return {"payload": payload, "station": st, "history": h, "cat": cat,
             "proxy": proxy, "imputed_slots": imputed,
-            "missing_slots": n_missing}
+            "carried_slots": carried, "missing_slots": n_missing}
 
 
 def predict_one(station_uid: str, at: datetime | None = None,
@@ -130,12 +145,24 @@ def predict_one(station_uid: str, at: datetime | None = None,
         "caveats": list(config.CAVEATS),
     }
     # 誠實標註：這次預測的 48 格 context 裡有幾格不是真值、幾格仍是 null
+    #
+    # ★ 三個數字要分開看，合報會把可信度差異碾掉（9/2 決策 11）：
+    #     imputed  一週前同 slot 的真值 —— 還有日內節律
+    #     carried  延用前值 —— 沒有節律，延用 53 小時與延用 1 小時同一個標記
+    #     missing  仍是 null
+    #   ⚠ 04-01~08-01 這段 43_level30_carry.sql 已經把洞全部填掉，
+    #     missing_slots 在那裡**恆為 0**。只看它會以為 48 格全是真值。
     out["imputed_slots"] = b["imputed_slots"]
+    out["carried_slots"] = b["carried_slots"]
     out["missing_slots"] = b["missing_slots"]
     if b["imputed_slots"]:
         out["caveats"].append(
             f"context 48 格中 {b['imputed_slots']} 格為週期補值（取一週前同 slot），"
             f"非實測；當日缺格要等隔日 08:00 後歷史 API 回補才會變成真值")
+    if b["carried_slots"]:
+        out["caveats"].append(
+            f"context 48 格中 {b['carried_slots']} 格為延用前值（該站連續超過 3 小時"
+            f"沒有回報），非實測；站台斷訊與水位真的沒動在這裡分不出來")
     if b["missing_slots"]:
         out["caveats"].append(
             f"context 48 格中 {b['missing_slots']} 格仍為 null（上週同 slot 也缺）")
@@ -165,6 +192,7 @@ if __name__ == "__main__":            # 冒煙 payload：計劃-AWS_Endpoint.md 
     print(f"station {a.station}  cat {b['cat']}"
           + (f"（代理自 {b['proxy']['cat_from']}）" if b["proxy"] else "")
           + f"  start {inst['start']}  target {len(inst['target'])} 格"
-          f"（週期補值 {b['imputed_slots']}／仍缺 {b['missing_slots']}）"
+          f"（週期補值 {b['imputed_slots']}／延用前值 {b['carried_slots']}"
+          f"／仍缺 {b['missing_slots']}）"
           f"  dynamic_feat {len(inst['dynamic_feat'][0])} 格", file=sys.stderr)
     json.dump(b["payload"], sys.stdout, ensure_ascii=False)

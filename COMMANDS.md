@@ -53,19 +53,40 @@ curl -s -X POST http://127.0.0.1:8000/api/v1/predict \
 
 ## 2. demo 回放模式
 
+### 前置：灌歷史資料（一次就好，9/2 新增）
+
+`demo.py` **不再預載 level30**。歷史區（2026-04-01 ～ 08-01）的單一出處是
+一支 SQL，跑一次就好，重跑也安全（它自己 DELETE 再全量重灌）：
+
 ```bash
-uv run python -m jobs.demo --status          # 虛擬時刻／回放進度
-uv run python -m jobs.demo --start           # 預載 4 月資料 + 設 demo 時鐘
-uv run python -m jobs.demo --start --reset   # ★ 先清乾淨再預載（會刪掉既有預測，見下）
-uv run python -m jobs.demo --stop            # 清時鐘與書籤（level30 保留）
-uv run python -m jobs.demo --stop --purge    # 連回放寫進 level30 的列一起刪
+PGPASSWORD=postgres psql -h 127.0.0.1 -p 5433 -U postgres -d youbike \
+  -v ON_ERROR_STOP=1 -f backend/sql/43_level30_carry.sql
 ```
 
-`--reset` 會清掉 demo 視窗（2026-04-01 ～ 2026-06-01）的回放列與預測列，
+約 40 秒，寫入 9,024,550 列 / 1,585 站。跑完 `--start` 會自己檢查
+context 在不在，空的就擋下來並提示跑這一行。
+
+★ 這支把 `baseline_grid` 裡連缺 3 小時以上的洞**全部 carry 補滿**
+（792,237 格，標 `is_imputed=2`）。代價已知並照收：斷訊站與「水位真的沒動」
+在資料層分不開了，斷線站會照常進風險清單、照常叫車。
+決策全文見 `meet/20260902/計劃-level30灌歷史與無限carry.md`。
+
+```bash
+uv run python -m jobs.demo --status          # 虛擬時刻／回放進度
+uv run python -m jobs.demo --start           # 設 demo 時鐘
+uv run python -m jobs.demo --start --reset   # ★ 先清預測再起跑（會刪掉既有預測，見下）
+uv run python -m jobs.demo --stop            # 清時鐘與書籤
+```
+
+`--reset` 會清掉 demo 視窗（2026-04-01 ～ 2026-06-01）的預測列，
 只動 4~5 月，不碰真排程資料。
 
 ⚠️ **`--reset` 會刪掉 `forecast_history` 的 4~5 月列。**
 已經花錢跑好的預測要留著重播，就用不帶 `--reset` 的 `--start`。
+
+⚠️ **`--reset` 與 `--purge` 都不再碰 `level30`**（9/2 決策 13）。
+歷史區是「真相的重採樣」不是 demo 狀態，reset demo 不該動它 ——
+要重建就跑上面那支 43。`--purge` 已移除。
 
 ### 純重播：不打 endpoint、跑到某一刻停表（9/1 新增）
 
@@ -82,7 +103,7 @@ uv run python -m jobs.demo --stop --purge    # 連回放寫進 level30 的列一
 uv run python -m app.repository.sys_config_repo --set virtual_now -            # ① 靜態時鐘優先序比 demo 高，不清起不來
 uv run python -m app.repository.sys_config_repo --set replay_predict 0         # ② 不打 endpoint
 uv run python -m app.repository.sys_config_repo --set demo_until '2026-05-02 00:00:00'
-uv run python -m jobs.demo --start                                            # ③ ★ 不可加 --reset
+uv run python -m jobs.demo --start                                            # ③ ★ 不可加 --reset（level30 已由 43 灌好，這步不再預載）
 uv run python -m app.repository.sys_config_repo --set forecast_end '2026-05-02 03:00:00'   # ④ Job B 不跑就沒人寫它
 uv run python -m app.repository.sys_config_repo --set scheduler_on 1           # ⑤
 export DEMO_SPEED=30 && while true; do bash jobs/run_job.sh tick; sleep 60; done   # ⑥

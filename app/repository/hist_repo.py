@@ -267,12 +267,17 @@ def _fill_level30(cur, src: str) -> int:
                    docks       = EXCLUDED.docks,
                    is_observed = EXCLUDED.is_observed,
                    is_imputed  = 0          -- 真值進來就不再是補值
-             -- ★ 只補缺格 + 蓋掉週期補值：既有「真值」一律不動
-             --   （避免事後補的值蓋掉當時實測），但 is_imputed=1 的格
+             -- ★ 只補缺格 + 蓋掉所有補值：既有「真值」一律不動
+             --   （避免事後補的值蓋掉當時實測），但 is_imputed <> 0 的格
              --   必須讓得出來 —— 那正是補值存在的前提（42_..._is_imputed.sql
              --   欄位註解的硬規則 ①），少了這條真值永遠回不來。
+             --
+             -- ★ 2026-09-02：條件從 `= 1` 放寬成 `<> 0`。is_imputed 變三態
+             --   之後（2 = 43_level30_carry.sql 灌的無限 carry），寫死 `= 1`
+             --   會讓 Job C 回補的真值蓋不掉那 79 萬格 carry，真值永遠進不來。
+             --   出處：meet/20260902/計劃-level30灌歷史與無限carry.md 決策 8。
              WHERE (hackathon_backend_level30.avail IS NULL
-                    OR hackathon_backend_level30.is_imputed = 1)
+                    OR hackathon_backend_level30.is_imputed <> 0)
                AND EXCLUDED.avail IS NOT NULL
         """, {"carry": _CARRY_MAX})
     return cur.rowcount
@@ -392,11 +397,32 @@ def impute_weekly(d0: date, d1: date) -> dict:
 
 
 def imputed_count(station_uid: str, t0, t1) -> int:
-    """某站某區間（含頭含尾）有幾格是週期補值 —— 給 /predict 誠實標註用。"""
+    """某站某區間（含頭含尾）有幾格是週期補值 —— 給 /predict 誠實標註用。
+
+    ★ 只算 is_imputed = 1。無限 carry（=2）走 carried_count()，兩個數字
+      刻意分開報：週期補值還有日內節律，長 carry 沒有 —— 07-11 那天
+      全市幾乎整天是同一個數字，合報會把這個可信度差異碾掉。
+    """
     with get_conn().cursor() as cur:
         cur.execute(
             "SELECT count(*) AS n FROM hackathon_backend_level30 "
             " WHERE station_uid = %s AND slot BETWEEN %s AND %s AND is_imputed = 1",
+            (station_uid, t0, t1))
+        return cur.fetchone()["n"]
+
+
+def carried_count(station_uid: str, t0, t1) -> int:
+    """某站某區間（含頭含尾）有幾格是無限 carry（is_imputed = 2）。
+
+    ★ 2026-09-02 新增。43_level30_carry.sql 把 4~7 月的洞全部 carry 掉之後，
+      /predict 的 48 格 context 不再有 null（missing_slots 恆為 0），
+      「這格是延用來的」變成唯一還說得出口的可信度訊號。
+      出處：meet/20260902/計劃-level30灌歷史與無限carry.md 決策 11。
+    """
+    with get_conn().cursor() as cur:
+        cur.execute(
+            "SELECT count(*) AS n FROM hackathon_backend_level30 "
+            " WHERE station_uid = %s AND slot BETWEEN %s AND %s AND is_imputed = 2",
             (station_uid, t0, t1))
         return cur.fetchone()["n"]
 
