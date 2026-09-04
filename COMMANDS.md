@@ -164,7 +164,8 @@ uv run python -m jobs.tick --status   # 只印狀態，不做事
 uv run python -m jobs.tick --force    # 無視判定強制跑一輪
 ```
 
-demo 模式下 tick 會走 **Job A′（replay_pull）**，並自動停用 Job C。
+tick 一律走 **Job A′（replay_pull）** —— 2026-09-04 起 TDX 拉取邏輯已移除，
+非 demo 模式時 tick 會印一次「已無資料來源」的警告就離開。
 `--status` 在 demo 中會多印「回放終點」與「回放觸發 JobB」兩行。
 
 `sys_config.replay_predict = 0` 時 Job A′ 不觸發 Job B（見 §2 純重播）。
@@ -181,17 +182,11 @@ uv run python -m jobs.batch_predict --limit 50             # 只跑 50 站
 uv run python -m jobs.batch_predict --slot '2026-05-01 20:30'
 uv run python -m jobs.batch_predict --dry-run              # 只組 payload 不打
 
-# Job A：拉 TDX 即時水位　★ demo 模式下有斷路器，會直接拒絕
-uv run python -m jobs.pull_realtime --dry-run
-
-# Job C：歷史 API 回補　★ 會扣 TDX 點數（月上限 150）
-uv run python -m jobs.backfill --status     # 只印判定與缺格率
-uv run python -m jobs.backfill --dry-run    # 印日期區間/URL，不真打
-uv run python -m jobs.backfill --days 3     # 縮小視窗
-
-# 站點主檔同步　★ 會打一次全量 TDX
-uv run python -m jobs.sync_stations --dry-run
-uv run python -m jobs.sync_stations --force-proxy   # 沒新站也重算代理
+# ★ 2026-09-04 移除：Job A（pull_realtime）／Job C（backfill）／sync_stations
+#   TDX 拉取邏輯全部刪掉，唯一的資料來源是 baseline_grid（Job A′ 見上）。
+#   站點主檔改為手動匯入維護。
+#   要重建 level30：psql -f sql/43_level30_carry.sql（冪等，會先 DELETE 4~7 月）
+#   出處：meet/20260904/計劃-移除TDX拉取邏輯.md
 ```
 
 ### 透過 wrapper 跑（有鎖、有 log、cron 也用這個）
@@ -324,7 +319,7 @@ git log --oneline
 ⚠️ **只在 `backend/` 版控**（跟 `ml-deepar/`、`ml-xgboost/` 一樣各自一個 repo）。
 專案根目錄不可 `git init` —— `raw/` 21 GB、`data/` 298 MB、`.venv*` 595 MB。
 
-`.gitignore` 已擋掉 `.env`（TDX 憑證）、`.cache/`（token 快取）、`logs/`、`.venv/`。
+`.gitignore` 已擋掉 `.env`、`.cache/`、`logs/`、`.venv/`。
 
 ---
 

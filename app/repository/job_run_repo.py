@@ -1,5 +1,5 @@
 # ════════════════════════════════════════════════════════════
-# job_run_repo —— hackathon_backend_job_run 的讀寫（三個 Job 共用）
+# job_run_repo —— hackathon_backend_job_run 的讀寫（Job A′ / Job B 共用）
 #
 # 規則（計劃-TDX排程與初始化.md §3「Job 歷程落地」）：
 #   開跑先 insert（status='running'）→ 結束 update。
@@ -10,10 +10,10 @@
 #     也不要寫排程去清它。
 #
 # 用法：
-#   rid = job_run_repo.start("pull_realtime", slot)
+#   rid = job_run_repo.start("pull_replay", slot)
 #   try:
 #       ... 做事 ...
-#       job_run_repo.finish(rid, "success", stations_ok=n, bytes_in=b)
+#       job_run_repo.finish(rid, "success", stations_ok=n)
 #   except Exception as e:
 #       job_run_repo.finish(rid, "failed", error=str(e)); raise
 #
@@ -122,49 +122,11 @@ def runs_on_day(job_name: str, day: "date") -> list[dict]:
         return cur.fetchall()
 
 
-def month_usage(day: "date | None" = None) -> dict:
-    """本月（含 day 的那個月，台北時間）的 TDX 用量與估算點數。
-
-    回 {"by_job": {...}, "points": float, "calls": int, "bytes": int}。
-
-    ★ 次數與流量「合併」計算，兩邊都要算（計劃-TDX排程與初始化.md §0
-      的 113.4.1 定價表）。只算流量會低估，只算次數對歷史服務會低估更多
-      —— 歷史服務 10 次/1 點，打 10 刀就是 1 點。
-
-    ★ 計費類別按 job_name 分（config.TDX_JOB_CATEGORY）：基礎服務
-      1,500 次/150 MB 一點、歷史服務 10 次/20 MB 一點，差 150 / 7.5 倍。
-      不在對照表裡的 job 當成 basic —— 會低估，所以新增 job 要記得加。
-
-    這是估算值，不是官方帳。每月仍要跟【會員中心/資料服務/使用統計】
-    對一次（計劃 §5 驗收 5，容許差 <20%）。
-    """
-    from app import config
-
-    d = day or datetime.now().date()
-    with get_conn().cursor() as cur:
-        cur.execute(
-            "SELECT job_name, count(*) AS calls, "
-            "       COALESCE(sum(bytes_in), 0)::bigint AS bytes "
-            "  FROM hackathon_backend_job_run "
-            " WHERE bytes_in IS NOT NULL "
-            "   AND date_trunc('month', started_at AT TIME ZONE 'Asia/Taipei') "
-            "       = date_trunc('month', %s::timestamp) "
-            " GROUP BY job_name", (d,))
-        rows = cur.fetchall()
-
-    by_job, points, calls, nbytes = {}, 0.0, 0, 0
-    for r in rows:
-        cat = config.TDX_JOB_CATEGORY.get(r["job_name"], "basic")
-        rate = config.TDX_RATE[cat]
-        mb = r["bytes"] / 1_048_576
-        pt = r["calls"] / rate["calls_per_point"] + mb / rate["mb_per_point"]
-        by_job[r["job_name"]] = {"category": cat, "calls": r["calls"],
-                                 "mb": round(mb, 2), "points": round(pt, 3)}
-        points += pt
-        calls += r["calls"]
-        nbytes += r["bytes"]
-    return {"by_job": by_job, "points": round(points, 2),
-            "calls": calls, "bytes": nbytes}
+# ★★ 2026-09-04：month_usage()（本月 TDX 用量與估算點數）已移除 ——
+#   TDX 拉取邏輯全部清掉，沒有東西會呼叫它，config.TDX_RATE /
+#   TDX_JOB_CATEGORY 也一併不在了。出處：
+#   meet/20260904/計劃-移除TDX拉取邏輯.md §1-6。
+#   ⚠ job_run 表本身保留：replay_pull 每輪記一列，bytes_in 留 NULL。
 
 
 # ════════════════════════════════════════════════════════════

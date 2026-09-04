@@ -15,7 +15,7 @@
 | 賽事 | 2026 新北市 AI 智慧城市黑客松（DIGITIMES 主辦） |
 | 組別 | 交通局 —— YouBike 智慧調度 |
 | 決賽 | 2026/9/12–13　新北市政府大禮堂 |
-| 資料集 | 新北市資料開放平台 — YouBike2.0 租賃站歷史數據（6 個月）+ TDX 即時 API |
+| 資料集 | 新北市資料開放平台 — YouBike2.0 租賃站歷史數據（6 個月）|
 | 技術限制 | 生成式／預測模型僅限 Amazon Bedrock、SageMaker AI，不可用外部 API |
 
 ### 團隊成員
@@ -36,9 +36,9 @@
 
 ```
                  ┌──────────────┐
-  TDX 即時 API ──│  Job A  tick │──► level30（30 分水位歷程）
-  TDX 歷史 API ──│  Job C  補洞 │        │
-                 └──────────────┘        ▼
+  baseline_grid ─│ Job A′  tick │──► level30（30 分水位歷程）
+  （歷史真相）    └──────────────┘        │
+                                          ▼
                                   ┌─────────────┐
                                   │  Job B      │──► SageMaker Endpoint
                                   │ batch_predict│    (DeepAR H=6)
@@ -62,7 +62,7 @@ Job B 每 30 分鐘把全站預測寫進 `forecast_history`，前端查詢只讀
 | 服務 | Python 3.12 + FastAPI + uvicorn（uv 管相依） |
 | 資料庫 | PostgreSQL 17（podman 容器 `youbike-pg`，port 5433） |
 | 模型 | AWS SageMaker DeepAR，`ap-northeast-1` |
-| 資料源 | TDX 運輸資料流通服務（銅級，200 點/月） |
+| 資料源 | `baseline_grid`（歷史數據重採樣成 30 分格，2026-04~07）|
 | 前端 | 單檔 HTML（`meet/20260831/單站檢視.html`），`file://` 直開 |
 
 ---
@@ -161,20 +161,22 @@ overall / dispatch）+ `truth`（對答案用，demo 回放時給 baseline 真�
 
 ## 6. 排程
 
-`jobs/tick.py` 每分鐘由 cron 呼叫，做兩條互不相干的判定：
+`jobs/tick.py` 每分鐘由 cron 呼叫，做一條判定：
 
-- **① 資料落後** `floor(now, 30min) > current_slot` → Job A 拉 TDX 當下這一格，成功後同程序觸發 Job B 批次預測
-- **② 自癒回補** 今日未補過 + 已過 08:00 + 不在失敗退避中 → Job C 打歷史 API 補洞（一天最多一次）
+- **① 資料落後** `floor(now, 30min) > current_slot` → Job A′ 從 `baseline_grid` 搬當下這一格
+  （落後多格就一次搬齊），成功後同程序觸發 Job B 批次預測
 
 比固定 `:01 / :31` 好的原因：機器睡著／斷網／PG 沒起來的那幾輪，醒來後**下一分鐘**就補上
-（cron 不會替你補跑錯過的排程）。兩條都不成立就什麼都不印 —— 否則 log 一天多 2,880 行廢話。
+（cron 不會替你補跑錯過的排程）。判定不成立就什麼都不印 —— 否則 log 一天多 2,880 行廢話。
 「輪詢還活著嗎」看 `sys_config.last_tick`，不看 log。
 
-### TDX 用量護欄
+### ★ 2026-09-04：TDX 拉取邏輯已移除
 
-銅級 200 點/月，用到 105% 停權。歷史服務比基礎服務貴 **150 倍**（次數）／7.5 倍（流量），
-所以：`$select` 只取五欄（0.37 MB/次 → 省到 1 點/月）、`$top` 一律明寫
-（漏帶預設只回 30 筆且不報錯）、本月估算超過 150 點自動停 Job C 只保 Job A/B。
+Job A（即時 API）／Job C（歷史 API 自癒回補）／`sync_stations`（主檔同步）三支與
+`app/tdx/` client 全部刪除，連帶 `actual_history` 表、週期補值、TDX 用量護欄與點數對帳。
+唯一的資料來源是 `baseline_grid`，站點主檔改為手動匯入維護。
+**tick 只在 demo 回放模式下有事做** —— 非 demo 時印一次警告就離開。
+出處：`meet/20260904/計劃-移除TDX拉取邏輯.md`。
 
 ---
 
@@ -191,11 +193,8 @@ bash sql/30_load_cat_map.sh                      # ★ 灌 cat 對照表（換�
 bash sql/31_load_proxy_cat.sh                    # 鄰站 cat 代理
 psql -f sql/40_scheduler_tables.sql -f sql/41_sys_config.sql -f sql/50_station_slot_average.sql
 
-# 2. 憑證（backend/.env，不進版控）
-cat > .env <<'ENV'
-TDX_CLIENT_ID=你的_client_id
-TDX_CLIENT_SECRET=你的_client_secret
-ENV
+# 2. level30 灌歷史（baseline_grid → level30，無限 carry，冪等）
+psql -v ON_ERROR_STOP=1 -f sql/42_level30_is_imputed.sql -f sql/43_level30_carry.sql
 
 # 3. SageMaker endpoint
 uv run python aws/deploy_endpoint.py
@@ -214,7 +213,7 @@ crontab jobs/crontab.txt        # 或：while true; do bash jobs/run_job.sh tick
 
 ### demo 回放模式
 
-現場不依賴 TDX 即時資料 —— 用虛擬時鐘回放 2026-05 的歷史（模型訓練只到 2026-03-31，
+現場不依賴任何外部 API —— 用虛擬時鐘回放 2026-05 的歷史（模型訓練只到 2026-03-31，
 回放時等於沒看過答案，可以當場「對答案」）：
 
 ```bash
@@ -224,7 +223,7 @@ uv run python -m jobs.demo --stop               # 收工
 ```
 
 虛擬時間起點 `2026-05-01 08:00`，流速 5（真實 1 分鐘 = 虛擬 5 分鐘，一格 30 分 = 真實 6 分鐘）。
-demo 模式下 tick 改走 Job A′（從 baseline_grid 逐格搬），Job A 有斷路器會直接拒絕打 TDX。
+tick 一律走 Job A′（從 baseline_grid 逐格搬）—— 2026-09-04 起這是唯一的資料來源。
 
 ---
 
@@ -238,16 +237,13 @@ backend/
 │   ├── controller/          路由層（station / predict）
 │   ├── service/             業務層（overview 風險判定／predict payload／station）
 │   ├── repository/          資料層（每張表一支）
-│   ├── schema/              Pydantic DTO
-│   └── tdx/                 TDX client（token 檔案快取、429 退避）
+│   └── schema/              Pydantic DTO
 ├── jobs/
 │   ├── tick.py              ★ 每分鐘輪詢，排程入口
-│   ├── pull_realtime.py     Job A：拉 TDX 即時水位
+│   ├── replay_pull.py       Job A′：baseline_grid → level30（唯一資料來源）
 │   ├── batch_predict.py     Job B：全站批次預測（50 站一批）
-│   ├── backfill.py          Job C：歷史 API 自癒回補
-│   ├── replay_pull.py       Job A′：demo 回放
+│   ├── predict_range.py     一段 origin 逐輪批打（歷史區補預測）
 │   ├── demo.py              demo 時鐘 start/stop/status
-│   ├── sync_stations.py     站點主檔每日同步
 │   ├── run_job.sh           wrapper：鎖 + log（cron 走這支）
 │   └── crontab.txt          cron 設定（由使用者自行安裝）
 ├── sql/                     建置腳本 10 ~ 50
@@ -256,8 +252,8 @@ backend/
 ```
 
 資料表（皆 `hackathon_backend_` 前綴，與訓練管線的表切開）：
-`station` / `town` / `level30` / `calendar` / `actual_history` / `forecast_history` /
-`job_run` / `sys_config` / `station_slot_average`
+`station` / `town` / `level30` / `calendar` / `forecast_history` / `forecast_run` /
+`risk_snapshot` / `job_run` / `sys_config` / `station_slot_average`
 
 ---
 
@@ -275,7 +271,7 @@ backend/
   每晚必亮燈，是否加註記未拍板。
 - **cat 對照表是最危險的一步**　cat 編號由訓練時的字典序決定，錯了不會報錯 ——
   每一站都拿到別站的預測，數字看起來完全合理。換模型必跑 `sql/30_load_cat_map.sh`。
-- **資料品質**　2026-07-10 上午 TDX 餵食故障，07:00 那個快照全表 1,572 站 `avail` 全部 = 0
+- **資料品質**　2026-07-10 上午餵食故障，07:00 那個快照全表 1,572 站 `avail` 全部 = 0
   （清晨全空城不可能，是謊報）。約 1.17 萬個謊報格，佔全表 0.04%，訓練影響可忽略但已記錄在案。
 
 ---

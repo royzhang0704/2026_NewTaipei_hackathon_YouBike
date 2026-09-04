@@ -12,7 +12,8 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 
 # ★ .env 只在這裡載入一次，且不覆蓋既有環境變數（override=False）——
 #   cron/CI 用真環境變數注入時，檔案不該把它蓋回去。
-#   金鑰（TDX_CLIENT_ID / TDX_CLIENT_SECRET）只從 backend/.env 讀，不進版控。
+#   ★ 2026-09-04：TDX 金鑰兩鍵已隨拉取邏輯移除（本檔不再讀它們）。
+#     .env 裡留著無害，現在用到的是 PG 連線與 ENDPOINT_* 那幾個。
 load_dotenv(BASE_DIR / ".env", override=False)
 
 # ── AWS / endpoint ──
@@ -78,95 +79,39 @@ PG = dict(
 )
 
 # ════════════════════════════════════════════════════════════
-# TDX（運輸資料流通服務平臺）
-#   出處：meet/20260828/計劃-TDX排程與初始化.md §0~§2（官方費率頁與 swagger 查證）
-#   方案：銅級（月費 200 元 / 200 點 / 5 次每秒每金鑰）
-# ════════════════════════════════════════════════════════════
-
-# 金鑰：只從 backend/.env 讀（上面 load_dotenv）。缺值不在 import 時炸，
-# 讓 client 取 token 那一刻才報 —— 不打 TDX 的服務啟動不該被卡住。
-TDX_CLIENT_ID     = os.environ.get("TDX_CLIENT_ID", "")
-TDX_CLIENT_SECRET = os.environ.get("TDX_CLIENT_SECRET", "")
-
-# ── 端點 ──（計劃 §2 步驟 3；basic/historical 兩條 base 分屬不同計費類別）
-TDX_AUTH_URL = ("https://tdx.transportdata.tw/auth/realms/TDXConnect"
-                "/protocol/openid-connect/token")
-TDX_API_BASE = "https://tdx.transportdata.tw/api/basic"        # 基礎服務：1,500 次/1 點
-TDX_HIST_BASE = "https://tdx.transportdata.tw/api/historical"  # 歷史服務：10 次/1 點（貴 150 倍）
-TDX_CITY = "NewTaipei"                                          # 本專案只做新北
-
-# 常用 path（給 client.get() 的第一參數，不含 base）
-TDX_PATH_AVAILABILITY = f"/v2/Bike/Availability/City/{TDX_CITY}"  # 即時可借可還
-TDX_PATH_STATION      = f"/v2/Bike/Station/City/{TDX_CITY}"       # 站點主檔
-
-# $select（站點主檔）：v2/Bike/Station 的巢狀欄位整包取回
-#   StationName {Zh_tw,En} / StationPosition {PositionLat,PositionLon} /
-#   StationAddress {Zh_tw,En}。主檔一天只拉一次，欄位多一點不影響點數。
-#   ⚠ LocationTown 官方回傳恆為空字串，行政區只能靠 station_uid 第 8~9 位
-#     或地址字串（raw/importdata/…站位歷史資料 欄位說明.md:63 已記載）。
-TDX_SELECT_STATION = ("StationUID,StationName,StationPosition,"
-                      "StationAddress,BikesCapacity")
-
-# ★ $select 五欄：不要全欄位。全欄位 ≈230 B/站 × 1,600 站 = 0.37 MB/次，
-#   一個月 550 MB ≈ 4 點；只取五欄再加 gzip 降到 ≈1 點。（計劃 §1 省點規則 2）
-TDX_SELECT_AVAILABILITY = ("StationUID,AvailableRentBikes,AvailableReturnBikes,"
-                           "ServiceStatus,SrcUpdateTime")
-
-# ★★ $top 預設只回 30 筆（swagger 查證）—— 漏帶不會報錯，只會安靜少站。
-#    全量呼叫一律帶 TDX_TOP_ALL；開發期測試一律用 $top=3。（計劃 §1 省點規則 3）
-TDX_TOP_ALL = 10000
-TDX_TOP_DEV = 3
-
-# ★ 資料新鮮度門檻：SrcUpdateTime 距 slot 超過這個時數的站，
-#   level30 不寫列（按缺格處理）。3 小時 = 重採樣規則的 carry-forward
-#   上限 6 格 × 30 分（計劃 §3「30 分重採樣規則」第 2 條）——
-#   站台斷訊時 TDX 仍回舊值，照寫進 level30 會變成假的水平線。
-#   actual_history 仍照寫快照（保留證據），兩張表在這裡刻意不一致。
-STALE_MAX_HOURS = 3
-
 # 台北時區：slot 一律台北時間 naive timestamp（對齊 level30 既有慣例）。
 # ★ 不能用系統本地時區 —— cron 的 TZ 可能與開發機不同，
 #   算出來的 slot 會整批偏移，而且不會報錯。
 TZ_TAIPEI = "Asia/Taipei"
 
+# ════════════════════════════════════════════════════════════
+# ★★ 2026-09-04：TDX 相關設定全部移除（約 30 個常數）
+#   出處：meet/20260904/計劃-移除TDX拉取邏輯.md §1-5。
+#   移除的有：金鑰兩鍵／auth 與 basic/historical 兩條 base／四支 path／
+#   兩組 $select／$top 兩個／token 快取兩項／逾時重試三項／
+#   歷史 API 四項／Job C 四道判定與用量護欄／TDX_RATE／TDX_JOB_CATEGORY。
+#
+#   一併移除的零使用常數（原使用者是被刪掉的那些檔案）：
+#     STALE_MAX_HOURS       原本由 pull_realtime 與 hist_repo 用。
+#       ⚠ 這條規則本身沒有消失 —— 它寫死在 sql/43_level30_carry.sql
+#         與 baseline_grid 的重採樣裡（>6 格留 NULL），不是這個常數在管。
+#     IMPUTE_LOOKBACK_DAYS / IMPUTE_WINDOW_DAYS   週期補值（impute_weekly）
+#     BACKFILL_*（4 個）    Job C 的判定門檻
+#
+#   保留的（不屬 TDX，仍有使用者）：
+#     TZ_TAIPEI／FREQ_MIN／JOB_A_MIN_COVERAGE（replay_pull:163 在用）／
+#     DEMO_*／LEVEL30_RETENTION_DAYS（零使用，但 retention 未實作，
+#     sql/43 的註解仍指著它）。
+# ════════════════════════════════════════════════════════════
+
 # Job B 一次 invoke 塞幾站。DeepAR 的 instances 是陣列，1,600 站分 32 批
 # 打完；不是 1,600 次單發（計劃 §3 Job B 步驟 2）。
 PREDICT_BATCH_SIZE = 50
 
-# Job A 的成功判定：寫入 level30 的站數 ≥ 主檔站數 × 這個比例才觸發 Job B。
+# Job A′ 的成功判定：寫入 level30 的站數 ≥ 主檔站數 × 這個比例才觸發 Job B。
 # 半份資料打出來的預測比沒有更糟（計劃 §3 Job A 步驟 4）。
+# ★ 常數名保留 JOB_A_ 前綴：replay_pull:163 就是拿它當門檻，改名沒有好處。
 JOB_A_MIN_COVERAGE = 0.8
-
-# ── token 快取 ──（官方要求快取重用，效期 24h、建議 23h 重取；計劃 §0）
-#   檔案存 backend/.cache/tdx_token.json，判斷用「檔案 mtime」而不是回應的
-#   expires_in —— mtime 是重啟後仍在的事實，記憶體變數不是。
-TDX_TOKEN_CACHE = BASE_DIR / ".cache" / "tdx_token.json"
-TDX_TOKEN_TTL_SEC = 23 * 3600
-
-# ── 逾時與重試 ──（銅級超過 5 次/秒回 HTTP 429，不另行通知，要自己 backoff）
-TDX_TIMEOUT_SEC = 30
-TDX_RETRY_MAX = 3      # 429/5xx 的重試次數上限（不含第一次）
-TDX_RETRY_WAIT_SEC = 2  # 每次退避固定 2 秒（計劃 §3 Job A 步驟 2）
-
-# ════════════════════════════════════════════════════════════
-# 歷史 API 與 Job C backfill（自癒回補）
-#   出處：meet/20260828/計劃-排程自癒與level30滾動視窗.md §0~§2
-# ════════════════════════════════════════════════════════════
-
-# 歷史服務端點（base 用 TDX_HIST_BASE，計費類別與 basic 不同）
-#   GET /api/historical/v2/Historical/Bike/Availability/NewTaipei
-#       ?Dates=2026-09-05~2026-09-11&$format=CSV&$top=99999999
-TDX_PATH_HIST_AVAIL = f"/v2/Historical/Bike/Availability/{TDX_CITY}"
-
-# ★ Dates 一刀最多 7 日（計劃-TDX排程與初始化.md §1 swagger 查證）。
-#   超過要自己分刀 —— 給 8 天不會報錯，只會安靜地少回幾天。
-TDX_HIST_MAX_DAYS = 7
-# 歷史 API 的 $top：CSV 是逐筆回報列（單日 27 萬列），不是站數
-TDX_HIST_TOP = 99999999
-
-# ★ 歷史 API 每日 08:00 才更新至「昨日」（計劃-TDX排程與初始化.md §3 查證）。
-#   → 當日缺格當天補不到，最快隔天 08:00 後自癒。這是 tick 判定 c 的依據。
-TDX_HIST_READY_HOUR = 8
 
 # ── 風險門檻（8/31 定案，依 2026-04 全月 201 萬格實測校準）──
 #   T = clamp(round(RISK_PCT × 車柱), RISK_MIN, RISK_MAX)
@@ -199,44 +144,7 @@ SLOT_AVG_MIN_N = 10
 #   （高=現況已越線且近 1 小時仍越線／中=1HR 內／低=1~3HR 內／無=不越線）。
 RISK_ALGO_VER = "time-v1/pct15"
 
-# ── Job C 的四道判定（計劃-排程自癒 §1 ②，由便宜到貴）──
-#   a 今日尚未有 backfill success   b 失敗退避   c 08:00   d 缺格率
-BACKFILL_WINDOW_DAYS = 10       # 缺格偵測與回補的視窗（= seed 天數，理由見計劃 §2）
-BACKFILL_GAP_THRESHOLD = 0.10   # 單日缺格率超過這個才值得花點數拉
-BACKFILL_RETRY_AFTER_MIN = 60   # 今日最後一次 failed 距今未滿這麼久就不重試
-
-# ── 用量護欄（計劃-TDX排程與初始化.md §3「用量護欄」）──
-#   本月估算點數超過就停 Job C，只保 Job A/B。銅級 200 點、用到 105% 停權。
-BACKFILL_POINT_LIMIT = 150
-
-# ★ 扣點換算表（113.4.1 定價表，計劃-TDX排程與初始化.md §0）——
-#   次數與流量「合併」計算，兩邊都要算進去。
-#   歷史服務比基礎服務貴 150 倍（次數）／7.5 倍（流量），不可共用一組數字。
-TDX_RATE = {
-    "basic":      {"calls_per_point": 1500, "mb_per_point": 150},
-    "historical": {"calls_per_point": 10,   "mb_per_point": 20},
-}
-# job_name → 計費類別。新增 job 時要一起加，漏了會被當成 basic 而低估點數。
-TDX_JOB_CATEGORY = {
-    "pull_realtime": "basic",
-    "sync_stations": "basic",
-    "backfill":      "historical",
-    "init_backfill": "historical",
-}
-
 # ── level30 滾動視窗（計劃-排程自癒 §2）──
 #   ★ 留 14 天而非 7：給 Job C 補洞與驗證重跑留餘裕。retention 在階段②實作。
 LEVEL30_RETENTION_DAYS = 14
 
-# ── 週期補值（計劃-排程自癒 §2「週期補值」，8/28 使用者定案直接上線）──
-#   當日缺格歷史 API 補不到（每日 08:00 才更新至昨日），改在組 payload
-#   那一層用「一週前同 slot」補。★ 值不落 level30 —— 理由見
-#   predict_service.build_payload() 的註解。
-#   取 7 天而不是 1 天：星期幾決定作息，週五的早上像上週五不像昨天週四。
-IMPUTE_LOOKBACK_DAYS = 7
-
-# ★ 8/28 使用者定案：補值**寫進 level30**（計劃原文是「值不落表」）。
-#   落表就必須有 is_imputed 旗標與三條硬規則，見 sql/42_level30_is_imputed.sql
-#   的欄位註解。每輪 Job A 寫完當下這格之後，順手補這個天數內的洞。
-#   2 天：足夠蓋住 48 格（24 小時）的服務視窗還有餘裕，又不必每輪掃 14 天。
-IMPUTE_WINDOW_DAYS = 2

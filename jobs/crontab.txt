@@ -11,18 +11,20 @@
 # ════════════════════════════════════════════════════════════
 #
 # ── 為什麼是每分鐘，而不是固定 :01 / :31 ──
-#   tick 每分鐘做兩條判定，都不成立就什麼都不做、不印任何東西
+#   tick 每分鐘做一條判定，不成立就什麼都不做、不印任何東西
 #   （所以 log 不會被灌爆）：
-#     ① floor(有效now,30min) > 已拉到的 slot  → Job A 拉當下這一格
-#     ② 今日還沒補過 + 已過 08:00 + 沒在失敗退避中 → Job C 回補歷史
+#     ① floor(有效now,30min) > 已拉到的 slot  → Job A′ 搬當下這一格
 #   好處是機器睡著／斷網／PG 沒起來的那幾輪，醒來後「下一分鐘」就補上 ——
 #   cron 不會替你補跑錯過的排程，固定半點就得乾等到下一個半點。
-#   ★ ① 補的是「當下這一格」，中間漏掉的洞即時 API 給不了 —— 那是 ② 的事。
-#   ★ ② 是 8/28 改版：Job C 原本是「每日 08:30」一行 cron，改成由 tick
-#     判定觸發。原因同上 —— 08:30 那一分鐘沒開機，洞就要再等 24 小時。
-#     ⚠ ② 會打「歷史服務」（10 次/1 點、20 MB/1 點，比即時貴 150 倍），
-#       但一天最多一次，且本月估算超過 150 點會自停。
-#       想先看它會做什麼：uv run python -m jobs.backfill --dry-run
+#   ★ 中間漏掉的格子會一併補齊 —— 資料都在 baseline_grid，
+#     Job A′ 一次 INSERT..SELECT 就搬完。
+#
+# ★★ 2026-09-04：TDX 拉取邏輯全部移除（Job A / Job C / sync_stations）。
+#   唯一的資料來源是 baseline_grid，tick 只在 demo 回放模式下有事做 ——
+#   非 demo 時它印一次警告就離開。出處：
+#   meet/20260904/計劃-移除TDX拉取邏輯.md
+#   ⚠ 本檔改過就要重裝 crontab（見上面「安裝」），否則 cron 還在跑舊的
+#     sync_stations —— 那支檔案已經不存在，每天會多一次 ModuleNotFoundError。
 #
 # ── macOS 三個會讓 cron「安靜地什麼都沒做」的坑 ──
 #   1. cron 的 PATH 只有 /usr/bin:/bin —— 所以一律走 run_job.sh，
@@ -35,20 +37,18 @@
 # ── 另外兩個前提 ──
 #   * PostgreSQL 容器要在跑（podman ps 看 youbike-pg），否則每輪都 failed
 #   * Job B 會打 SageMaker endpoint，endpoint 沒開時 Job B 記 failed
-#     （Job A 仍會 success —— 兩件事各記一列，這是刻意的）
+#     （Job A′ 仍會 success —— 兩件事各記一列，這是刻意的）
 #
 # ════════════════════════════════════════════════════════════
-# 實際內容（以下兩行貼進 crontab -e）
+# 實際內容（以下一行貼進 crontab -e）
 # ════════════════════════════════════════════════════════════
 
 SHELL=/bin/bash
 
-# 每分鐘輪詢：① 資料落後才拉 TDX（拉成功就同程序觸發 Job B）
-#             ② 歷史有洞且已過 08:00 才回補（Job C，同程序，一天最多一次）
+# 每分鐘輪詢：資料落後才從 baseline_grid 搬一格（成功就同程序觸發 Job B）
 # 現況查詢：uv run python -m jobs.tick --status
-#           uv run python -m jobs.backfill --status   # 只看 ② 的判定與缺格率
+#           uv run python -m jobs.demo --status      # 回放時鐘與進度
 * * * * * /bin/bash /Volumes/myPro/codes/race/youbike-hackathon/backend/jobs/run_job.sh tick
 
-# 站點主檔：每日一次（新站/擴柱/更名進主檔，新站自動補鄰站代理）
-# 計劃 §1：/v2/Bike/Station 每日 1 次，點數可忽略（<1 點/月）
-10 4 * * * /bin/bash /Volumes/myPro/codes/race/youbike-hackathon/backend/jobs/run_job.sh sync_stations
+# ★ 2026-09-04：sync_stations（站點主檔每日同步）那行已移除 ——
+#   該支檔案隨 TDX 拉取邏輯一起刪掉，主檔改為手動匯入維護。

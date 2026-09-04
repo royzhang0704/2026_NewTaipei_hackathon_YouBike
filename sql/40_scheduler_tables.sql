@@ -1,9 +1,10 @@
 -- ════════════════════════════════════════════════════════════
--- 40_scheduler_tables.sql —— 建排程用的 3 張 hackathon_backend_* 表
+-- 40_scheduler_tables.sql —— 建排程用的 2 張 hackathon_backend_* 表
 --
---   actual_history   每 30 分的 TDX 原始快照（審計 / 重算的唯一依據）
 --   forecast_history 每次批打的完整分位數（前端可直接讀現成結果）
 --   job_run          每次排程執行一列，開跑 insert / 結束 update
+--
+-- ★★ 2026-09-04：原本的第 3 張 actual_history 已廢止（見下方 ══ 1 段）。
 --
 -- 出處：meet/20260828/計劃-TDX排程與初始化.md §3（DDL 照抄）
 --
@@ -20,36 +21,27 @@
 
 BEGIN;
 
--- ══ 1　站點實際歷史 ══════════════════════════════════════════
---   Job A 每 30 分寫一批。這是「TDX 當下的認知」的原始快照，
---   不做任何守門 / carry-forward —— 那些是 level30 那一層的事。
-CREATE TABLE IF NOT EXISTS public.hackathon_backend_actual_history (
-  station_uid     text        NOT NULL,
-  slot            timestamp   NOT NULL,   -- floor(now, 30min)，台北時間 naive
-  avail           int,                    -- AvailableRentBikes
-  return_slots    int,                    -- AvailableReturnBikes
-  service_status  int,                    -- 0/1/2（1=正常營運）
-  src_update_time timestamptz,            -- TDX 來源時間，可驗資料新鮮度
-  fetched_at      timestamptz NOT NULL DEFAULT now(),
-  PRIMARY KEY (station_uid, slot)
-);
+-- ══ 1　站點實際歷史 ══ ★★ 2026-09-04 廢止，本段已移除 ══════════
+--
+--   原本這裡建 public.hackathon_backend_actual_history（每 30 分的 TDX
+--   原始快照，8 欄 + PK(station_uid, slot)）。連同 TDX 拉取邏輯一起移除：
+--   寫入端（Job A pull_realtime、hist_repo.ingest）與讀取端
+--   （hist_repo.rebuild_level30）三者都已刪檔。
+--   出處：meet/20260904/計劃-移除TDX拉取邏輯.md §1-0 / §2。
+--
+--   ★ 為什麼是「刪掉 CREATE」而不是只跑 DROP：這支腳本是「疊加」設計，
+--     每次都會重跑一遍。CREATE IF NOT EXISTS 留在這裡的話，63 那支
+--     DROP 完，下一次跑 40 就把空表又建回來了。
+--
+--   ⚠ 那張表獨有的三個欄位在 level30 沒有對應，也無法反推：
+--       src_update_time  分辨「站點沒動」與「站台斷訊、TDX 回舊值」
+--       service_status   TDX ServiceStatus 0/1/2
+--       fetched_at       fetched_at−slot = 排程延遲；−src_update_time = 新鮮度
+--     使用者 2026-09-04 決定不備份，DROP 前的資料就到此為止。
+--
+--   要重建 level30 請走 sql/43_level30_carry.sql（baseline_grid → level30，
+--   冪等，會先 DELETE 04-01~08-01 再全量重灌）。
 
-COMMENT ON TABLE public.hackathon_backend_actual_history IS
-  '站點實際歷史：每 30 分的 TDX 原始快照，slot 對齊 :00/:30（台北時間 naive，與 level30 慣例一致）。模型讀的不是這張而是 hackathon_backend_level30 —— 這張留原始值供審計與重算，重採樣規則若日後修正，可以只從這裡重跑而不必再打 TDX。';
-COMMENT ON COLUMN public.hackathon_backend_actual_history.station_uid IS
-  'TDX 的 StationUID，與 hackathon_backend_station 同鍵（未設 FK：快照裡可能出現主檔還沒有的新站，Job A 會另行 insert 主檔 cat=NULL，不能讓 FK 把整批寫入擋下）。第 8~9 位是行政區碼。';
-COMMENT ON COLUMN public.hackathon_backend_actual_history.slot IS
-  '★ 台北時間 naive timestamp，floor 至 :00/:30。TDX 的 SrcUpdateTime 帶 +08:00 時區，先轉再比。與 level30.slot 同慣例 —— 兩邊對不齊，模型就讀不到當輪資料。';
-COMMENT ON COLUMN public.hackathon_backend_actual_history.avail IS
-  '★ AvailableRentBikes（可借車數）。三種零嚴格區分：NULL=TDX 沒回這個欄位／0=真的無車／填補值只存在於 level30 的 is_observed=0，這張表沒有填補值。這一欄就是 level30.avail 與模型 target 的來源。';
-COMMENT ON COLUMN public.hackathon_backend_actual_history.return_slots IS
-  'AvailableReturnBikes（可還空位數）。留著供審計與前端顯示；level30.docks 用的是主檔 capacity 而不是這一欄（重採樣規則第 4 條：docks 按日 join 當天容量）。';
-COMMENT ON COLUMN public.hackathon_backend_actual_history.service_status IS
-  'TDX ServiceStatus：0=停止服務、1=正常營運、2=暫停營運。非 1 時 avail 仍可能有值但不可信，重採樣的守門與異常查核會看這一欄。';
-COMMENT ON COLUMN public.hackathon_backend_actual_history.src_update_time IS
-  '★ 站台斷訊時 TDX 仍會回舊值。距 slot 超過 3 小時（= carry-forward 上限 6 格）的站，本表照寫快照（保留證據），但 level30 不寫列 —— 缺格 = NULL 語意。這是唯一能分辨「真的沒動」與「站台掛了」的欄位。';
-COMMENT ON COLUMN public.hackathon_backend_actual_history.fetched_at IS
-  '本機實際寫入時刻（帶時區）。與 slot 的差距 = 排程延遲，與 src_update_time 的差距 = 資料新鮮度，兩者診斷不同的問題，不要互相取代。';
 
 -- ══ 2　站點預測歷史 ══════════════════════════════════════════
 --   Job B 每輪寫 ≈1,594 站 × 6 格。同 origin 重跑走 upsert 覆蓋
@@ -116,13 +108,13 @@ COMMENT ON COLUMN public.hackathon_backend_job_run.started_at IS
 COMMENT ON COLUMN public.hackathon_backend_job_run.finished_at IS
   '結束時刻。★ NULL 且 status=running = process 中斷的殘列，這是刻意保留的診斷訊號，不要寫清理排程把它掃掉。';
 COMMENT ON COLUMN public.hackathon_backend_job_run.status IS
-  'running（開跑/中斷殘留）／success／skipped（Job A 覆蓋率 <80% 而不觸發 Job B、Job C 未達回補門檻）／failed。';
+  'running（開跑/中斷殘留）／success／skipped（Job A′ 覆蓋率 <80% 而不觸發 Job B）／failed。★ 2026-09-04 起 Job C 已移除，skipped 只剩覆蓋率一種成因。';
 COMMENT ON COLUMN public.hackathon_backend_job_run.stations_ok IS
   'Job A 成功寫入的站數。≥ 主檔站數 × 80% 才觸發 Job B —— 半份資料打出來的預測比沒有更糟。Job B 則記成功預測的站數（跳過的站不算）。';
 COMMENT ON COLUMN public.hackathon_backend_job_run.rows_written IS
-  '本輪實際寫入的資料列數。Job A ≈ 站數 ×2（actual_history + level30）、Job B ≈ 站數 ×6（每站 6 格）—— 與 stations_ok 的比例不對就是有站沒寫齊。';
+  '本輪實際寫入的資料列數。Job A′ ≈ 站數 ×1（只寫 level30）、Job B ≈ 站數 ×6（每站 6 格）—— 與 stations_ok 的比例不對就是有站沒寫齊。★ 2026-09-04 之前 Job A 是站數 ×2（同時寫 actual_history），舊列與新列不可直接比較。';
 COMMENT ON COLUMN public.hackathon_backend_job_run.bytes_in IS
-  '★ 點數對帳的唯一資料來源：len(resp.content)，實際收到的位元組（gzip 後）。月耗查 sum(bytes_in) WHERE started_at >= date_trunc(''month'', now())，超過 150 點估算值就停 Job C。TDX 銅級用到 105% 直接停權。Job B 不打 TDX，這欄留 NULL。';
+  '原本是 TDX 點數對帳的唯一資料來源（實際收到的位元組）。★ 2026-09-04 起 TDX 拉取邏輯已移除，Job A′ 與 Job B 都不打外部 API，這欄一律 NULL；job_run_repo.month_usage() 也一併刪了。歷史列裡的值仍是當時的實際流量，留著不動。';
 COMMENT ON COLUMN public.hackathon_backend_job_run.error IS
   '失敗/跳過原因摘要（429 重試耗盡、timeout、覆蓋率不足 x/y…）。一句話可讀即可，完整 traceback 留在 backend/logs/ 的 log 檔，不塞這裡。';
 COMMENT ON COLUMN public.hackathon_backend_job_run.detail IS
@@ -132,30 +124,28 @@ COMMIT;
 
 -- ══ 驗收 ═════════════════════════════════════════════════════
 \echo
-\echo '── 三張表是否都在（期望 3 列）'
+\echo '── 兩張表是否都在（期望 2 列）'
 SELECT c.relname AS 表名,
        (SELECT count(*) FROM pg_attribute a
          WHERE a.attrelid = c.oid AND a.attnum > 0 AND NOT a.attisdropped) AS 欄數,
        pg_size_pretty(pg_total_relation_size(c.oid)) AS 大小
 FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
 WHERE n.nspname = 'public'
-  AND c.relname IN ('hackathon_backend_actual_history',
-                    'hackathon_backend_forecast_history',
+  AND c.relname IN ('hackathon_backend_forecast_history',
                     'hackathon_backend_job_run')
 ORDER BY 1;
 
 \echo
-\echo '── PK / 索引（期望：actual 1、forecast 1、job_run 2）'
+\echo '── PK / 索引（期望：forecast 2、job_run 2）'   -- forecast 的第 2 個是 sql/62 加的 run_id_idx
 SELECT tablename AS 表名, indexname AS 索引名, indexdef AS 定義
 FROM pg_indexes
 WHERE schemaname = 'public'
-  AND tablename IN ('hackathon_backend_actual_history',
-                    'hackathon_backend_forecast_history',
+  AND tablename IN ('hackathon_backend_forecast_history',
                     'hackathon_backend_job_run')
 ORDER BY 1, 2;
 
 \echo
-\echo '── 註解覆蓋率（3 張表 + 26 欄，缺註解欄數應為 0）'
+\echo '── 註解覆蓋率（2 張表 + 20 欄，缺註解欄數應為 0）'
 SELECT c.relname AS 表名,
        count(*) AS 欄數,
        count(*) FILTER (WHERE col_description(c.oid, a.attnum) IS NULL) AS 缺註解,
@@ -163,15 +153,13 @@ SELECT c.relname AS 表名,
 FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
 JOIN pg_attribute a ON a.attrelid = c.oid AND a.attnum > 0 AND NOT a.attisdropped
 WHERE n.nspname = 'public'
-  AND c.relname IN ('hackathon_backend_actual_history',
-                    'hackathon_backend_forecast_history',
+  AND c.relname IN ('hackathon_backend_forecast_history',
                     'hackathon_backend_job_run')
 GROUP BY c.oid, c.relname
 ORDER BY 1;
 
 \echo
 \echo '── 現有列數（首次建表應為 0）'
-SELECT 'actual_history'   AS t, count(*) AS n FROM public.hackathon_backend_actual_history
-UNION ALL SELECT 'forecast_history', count(*) FROM public.hackathon_backend_forecast_history
+SELECT 'forecast_history' AS t, count(*) AS n FROM public.hackathon_backend_forecast_history
 UNION ALL SELECT 'job_run',          count(*) FROM public.hackathon_backend_job_run
 ORDER BY 1;

@@ -33,12 +33,34 @@
 #       「回放永遠不落在那個邊界」的假設是錯的，別再犯。
 # ════════════════════════════════════════════════════════════
 from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 
 from app import config
 from app.repository import job_run_repo, sys_config_repo
 from app.repository.db import get_conn
 
 JOB_NAME = "pull_replay"
+TZ = ZoneInfo(config.TZ_TAIPEI)
+
+
+def floor_slot(now: datetime | None = None) -> datetime:
+    """台北時間 floor 至 :00/:30，回 naive timestamp（level30 既有慣例）。
+
+    ★ 一律先轉台北再 floor。cron 的 TZ 未必等於開發機，
+      用系統本地時間算出來的 slot 會整批偏移，而且不會報錯。
+
+    ★ 2026-09-04 從 pull_realtime 搬過來（原 pull_realtime.floor_slot）——
+      TDX 拉取邏輯移除後那支檔案不在了，但 tick 仍要靠這條規則算
+      「應該拉到哪一格」。出處：meet/20260904/計劃-移除TDX拉取邏輯.md §1-3。
+      ⚠ 只此一份，不要在別處複製 —— slot 對齊規則一分岔，
+        模型就讀不到當輪資料，而且不會報錯。
+    """
+    # ★ 預設值走 sys_config.effective_now()，virtual_now 設了就跟著虛擬時間走。
+    #   不要在這裡直接 datetime.now() —— 那會讓排程與 API 活在不同時間。
+    t = now or sys_config_repo.effective_now()
+    t = t.astimezone(TZ) if t.tzinfo else t.replace(tzinfo=TZ)
+    return t.replace(minute=t.minute // 30 * 30, second=0,
+                     microsecond=0, tzinfo=None)
 
 
 def copy_range(since: datetime | None, until: datetime) -> tuple[int, int]:

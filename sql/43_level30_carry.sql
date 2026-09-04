@@ -30,7 +30,7 @@
 --     batch_predict 的 STALE_ANCHOR 歸零（68 站回到清單，正是要的）
 --     risk 的 now_carried 恆為 false（決策 10 定不修）
 --
--- ⚠⚠ retention 的衝突：config.py:225 的 LEVEL30_RETENTION_DAYS = 14
+-- ⚠⚠ retention 的衝突：config.py 的 LEVEL30_RETENTION_DAYS = 14
 --   目前只是常數、全 backend 零使用。計劃-排程自癒 §2 說它屬「階段②」。
 --   ★ 那支一實作，這裡灌的 4 個月會被刪剩 14 天。實作 retention 時
 --     必須把下界卡在 '2026-08-01'，讓歷史區豁免。
