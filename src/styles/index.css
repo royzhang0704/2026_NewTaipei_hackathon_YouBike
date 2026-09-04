@@ -1,0 +1,147 @@
+@import 'tailwindcss';
+@import 'maplibre-gl/dist/maplibre-gl.css';
+
+/* ──────────────────────────────────────────────────────────────
+   設計 token —— 取自 youbike-demo.html（深色「調度中心」）。
+   單站檢視.html 的淺色版之後可用 data-theme 疊加，暫以深色為主。
+   ────────────────────────────────────────────────────────────── */
+@theme {
+  --color-bg: #0b0d10;
+  --color-panel: #13161b;
+  --color-raise: #181c22;
+
+  --color-hair: rgba(255, 255, 255, 0.085);
+  --color-edge: rgba(255, 255, 255, 0.16);
+
+  --color-ink: #e9ebee;
+  --color-ink2: #a2a8b2;
+  --color-ink3: #6e747e;
+
+  --color-hot: #ee5a34; /* 無車可借 / 缺車 */
+  --color-cold: #5591f2; /* 無位可還 / 滿站 */
+  --color-calm: #6a6e75; /* 供需健康：刻意中性 */
+  --color-gold: #c99a3b; /* 對答案：實際值 */
+
+  --color-hot-wash: rgba(238, 90, 52, 0.12);
+  --color-cold-wash: rgba(85, 145, 242, 0.12);
+
+  --radius-xs: 2px;
+
+  --font-serif: 'Noto Serif TC', 'Songti TC', 'Times New Roman', Georgia, serif;
+  --font-sans: 'Helvetica Neue', Helvetica, 'PingFang TC', 'Noto Sans TC', Arial, sans-serif;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+  color-scheme: dark;
+}
+
+body {
+  margin: 0;
+  background: var(--color-bg);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+  font-size: 14.5px;
+  line-height: 1.68;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+svg {
+  display: block;
+}
+
+/* 共用小工具 class（沿用原型命名，方便對照） */
+.kicker {
+  font-size: 0.62rem;
+  letter-spacing: 0.26em;
+  text-transform: uppercase;
+  color: var(--color-ink3);
+  font-weight: 600;
+}
+
+.num {
+  font-family: var(--font-serif);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.025em;
+}
+
+.panel {
+  border: 1px solid var(--color-edge);
+  background: var(--color-panel);
+}
+
+.phead {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 11px 16px;
+  border-bottom: 1px solid var(--color-hair);
+  background: var(--color-raise);
+}
+
+/* MapLibre：套自家極簡風。maplibre 預設 popup 是白底，要壓成深色。 */
+.maplibregl-map {
+  font-family: var(--font-sans);
+}
+.maplibregl-ctrl-group {
+  background: var(--color-panel);
+  border: 1px solid var(--color-edge);
+}
+.maplibregl-ctrl-group button + button {
+  border-top: 1px solid var(--color-hair);
+}
+.maplibregl-ctrl-group button .maplibregl-ctrl-icon {
+  filter: invert(1) opacity(0.7);
+}
+/* 預設 compact attribution 是白底黑字（specificity 0,2,0）；用對等選擇器蓋成深色主題 */
+.maplibregl-ctrl-attrib,
+.maplibregl-ctrl-attrib.maplibregl-compact,
+.maplibregl-ctrl-attrib.maplibregl-compact-show {
+  background-color: var(--color-panel);
+  color: var(--color-ink2);
+  font-size: 11px;
+  border: 1px solid var(--color-hair);
+}
+.maplibregl-ctrl-attrib a,
+.maplibregl-ctrl-attrib.maplibregl-compact a {
+  color: var(--color-ink);
+  text-decoration: none;
+}
+.maplibregl-ctrl-attrib-button {
+  filter: invert(1) opacity(0.8);
+}
+
+.maplibregl-popup {
+  z-index: 20;
+}
+.maplibregl-popup-content {
+  background: var(--color-panel) !important;
+  color: var(--color-ink);
+  border: 1px solid var(--color-edge);
+  border-radius: var(--radius-xs);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+  font-size: 0.8rem;
+  line-height: 1.6;
+  padding: 9px 12px;
+}
+.maplibregl-popup-content b {
+  color: var(--color-ink);
+  font-weight: 600;
+}
+/* tip 三角形：四個方向各自吃一邊的 border-color */
+.maplibregl-popup-anchor-top .maplibregl-popup-tip {
+  border-bottom-color: var(--color-panel);
+}
+.maplibregl-popup-anchor-bottom .maplibregl-popup-tip {
+  border-top-color: var(--color-panel);
+}
+.maplibregl-popup-anchor-left .maplibregl-popup-tip {
+  border-right-color: var(--color-panel);
+}
+.maplibregl-popup-anchor-right .maplibregl-popup-tip {
+  border-left-color: var(--color-panel);
+}
+.maplibregl-popup-close-button {
+  color: var(--color-ink3);
+}
