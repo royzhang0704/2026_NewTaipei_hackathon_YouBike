@@ -1,3 +1,4 @@
+#!/usr/bin/env bash
 set -euo pipefail
 
 if [ "${RUN_TICK:-0}" = "1" ]; then
