@@ -318,10 +318,10 @@ export function AssistantWidget() {
         type="button"
         onClick={() => setOpen(true)}
         aria-label="開啟調度助理（快捷鍵 A）"
-        className="fixed bottom-[4.5rem] right-5 z-40 flex items-center gap-2 rounded-full border border-control bg-float px-[14px] py-[10px] text-[0.8rem] font-medium text-ink shadow-[0_8px_24px_rgba(0,0,0,.32)] hover:bg-raise focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-focus)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--color-bg)]"
+        title="調度助理（A）"
+        className="fixed bottom-[4.5rem] right-5 z-40 flex size-12 items-center justify-center rounded-full border border-control bg-float text-hot shadow-[0_8px_24px_rgba(0,0,0,.32)] hover:bg-raise focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-focus)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--color-bg)]"
       >
-        <Bot className="size-[17px] text-hot" aria-hidden />
-        調度助理
+        <Bot className="size-[19px]" aria-hidden />
       </button>
     )
   }

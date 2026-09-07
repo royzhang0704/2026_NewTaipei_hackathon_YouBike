@@ -1,37 +1,55 @@
-import { useMemo } from 'react'
+import { useMemo, useState } from 'react'
 import districtsGeo from '@/assets/newtaipei-districts.json'
 import outlineGeo from '@/assets/newtaipei-outline.json'
 
-/* 登入頁背景：新北市 29 行政區輪廓（線性投影，非 Mercator —— 範圍小、當裝飾夠了）。
-   動態：一次性 draw-on（描出輪廓）＋ 持續型（市界光點巡邏、整體極慢漂移、站點 ping）。
-   純裝飾、aria-hidden；減少動態時只保留靜態輪廓。 */
+/* 登入頁背景：新北市 29 行政區輪廓（線性投影，非 Mercator —— 範圍小、作裝飾足夠）。
+   動態：一次性 draw-on（描出輪廓）＋ 持續型（市界光點巡邏、整體極慢漂移、隨機站點 ping）。
+   ping 每次循環結束重新隨機取一個落在行政區內的點位與大小。純裝飾、aria-hidden；
+   減少動態時只保留靜態輪廓。 */
 
 const VB_W = 1000
 const VB_H = 866
-// 對齊 index.css 的 ntp-draw 時長：畫完地圖線才啟動 ping / 市界光點
-const DRAW_S = 2.8
+const DRAW_S = 2.8 // 對齊 index.css 的 ntp-draw 時長：畫完地圖線才啟動其他動畫
+const PING_COUNT = 7
 
 interface Feat {
   geometry: { type: string; coordinates: number[][][] | number[][][][] }
 }
 
-/** 把一組 GeoJSON feature 的所有 ring 攤平出來 */
-function collectRings(fc: { features: Feat[] }): number[][][] {
-  const rings: number[][][] = []
-  for (const f of fc.features) {
-    const polys = (
-      f.geometry.type === 'Polygon' ? [f.geometry.coordinates] : f.geometry.coordinates
-    ) as number[][][][]
-    for (const poly of polys) for (const ring of poly) rings.push(ring as number[][])
+const polysOf = (f: Feat): number[][][][] =>
+  (f.geometry.type === 'Polygon' ? [f.geometry.coordinates] : f.geometry.coordinates) as number[][][][]
+
+/** 攤平所有 ring（含孔）—— 給描邊路徑用 */
+function allRings(fc: { features: Feat[] }): number[][][] {
+  const out: number[][][] = []
+  for (const f of fc.features) for (const poly of polysOf(f)) for (const ring of poly) out.push(ring as number[][])
+  return out
+}
+
+/** 每個 polygon 的外環 —— 給「點是否落在陸地」判定用 */
+function outerRings(fc: { features: Feat[] }): number[][][] {
+  const out: number[][][] = []
+  for (const f of fc.features) for (const poly of polysOf(f)) out.push(poly[0] as number[][])
+  return out
+}
+
+function pointInRing(x: number, y: number, ring: number[][]): boolean {
+  let inside = false
+  for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+    const xi = ring[i][0]
+    const yi = ring[i][1]
+    const xj = ring[j][0]
+    const yj = ring[j][1]
+    if (yi > y !== yj > y && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi) inside = !inside
   }
-  return rings
+  return inside
 }
 
 function build() {
-  const districtRings = collectRings(districtsGeo as unknown as { features: Feat[] })
-  const outlineRings = collectRings(outlineGeo as unknown as { features: Feat[] })
+  const districtsFc = districtsGeo as unknown as { features: Feat[] }
+  const districtRings = allRings(districtsFc)
+  const outlineRings = allRings(outlineGeo as unknown as { features: Feat[] })
 
-  // bbox 用行政區那份（較密、較準），市界共用同一個投影才對得齊
   let minX = Infinity
   let minY = Infinity
   let maxX = -Infinity
@@ -60,23 +78,64 @@ function build() {
       return `${d}Z`
     })
 
-  return { districts: toPath(districtRings), outline: toPath(outlineRings) }
+  // 投影後的陸地外環 + 各自的 bbox（隨機取點時先在 bbox 內取樣，再判是否落在環內）
+  const land = outerRings(districtsFc).map((ring) => {
+    const r = ring.map((pt) => [px(pt[0]), py(pt[1])] as [number, number])
+    let a = Infinity
+    let b = Infinity
+    let c = -Infinity
+    let d = -Infinity
+    for (const [x, y] of r) {
+      if (x < a) a = x
+      if (x > c) c = x
+      if (y < b) b = y
+      if (y > d) d = y
+    }
+    return { r, bb: [a, b, c, d] as const }
+  })
+
+  return { districts: toPath(districtRings), outline: toPath(outlineRings), land }
 }
 
-// ★ 座標＝各行政區在此投影下的實際質心（已逐點驗證落在該區多邊形內），
-//   避開中央卡片 footprint，周邊分散。size（擴散峰值半徑）/ dur / delay 錯開 → 有大有小、不同步。
-const PINGS = [
-  { cx: 265, cy: 170, delay: 0.0, dur: 3.6, size: 5 }, // 淡水區
-  { cx: 448, cy: 134, delay: 1.4, dur: 3.9, size: 3.5 }, // 金山區（小）
-  { cx: 732, cy: 288, delay: 0.8, dur: 4.4, size: 7 }, // 瑞芳區（大）
-  { cx: 855, cy: 383, delay: 2.6, dur: 3.7, size: 4 }, // 貢寮區
-  { cx: 258, cy: 400, delay: 3.4, dur: 4.6, size: 8.5 }, // 板橋區（大）
-  { cx: 203, cy: 569, delay: 4.6, dur: 3.8, size: 4.5 }, // 三峽區
-  { cx: 366, cy: 691, delay: 5.4, dur: 4.2, size: 5.5 }, // 烏來區（地圖最南，穩定在卡片下方）
-]
+// 中央卡片的概略 footprint（viewBox 座標）—— 避免 ping 落在卡片後方看不到
+const inCard = (x: number, y: number) => x > 336 && x < 664 && y > 248 && y < 608
+
+type Land = ReturnType<typeof build>['land']
+
+function randPoint(land: Land): { cx: number; cy: number } {
+  for (let t = 0; t < 240; t++) {
+    const cell = land[(Math.random() * land.length) | 0]
+    const [a, b, c, d] = cell.bb
+    const x = a + Math.random() * (c - a)
+    const y = b + Math.random() * (d - b)
+    if (!inCard(x, y) && pointInRing(x, y, cell.r)) return { cx: +x.toFixed(1), cy: +y.toFixed(1) }
+  }
+  return { cx: 470, cy: 150 }
+}
+
+const randSize = () => +(3 + Math.random() * 6).toFixed(1) // 峰值半徑 3–9
+const randDur = () => +(3.2 + Math.random() * 1.8).toFixed(2) // 3.2–5s
+
+interface Ping {
+  cx: number
+  cy: number
+  size: number
+  dur: number
+}
 
 export function NewTaipeiBackdrop() {
-  const { districts, outline } = useMemo(build, [])
+  const { districts, outline, land } = useMemo(build, [])
+  const [pings, setPings] = useState<Ping[]>(() =>
+    Array.from({ length: PING_COUNT }, () => ({ ...randPoint(land), size: randSize(), dur: randDur() })),
+  )
+
+  // 每個 ping 一個循環結束（此時 opacity ≈ 0）就換位置與大小；dur / delay 固定不動，避免動畫重置
+  const repick = (i: number) =>
+    setPings((prev) => {
+      const next = prev.slice()
+      next[i] = { ...next[i], ...randPoint(land), size: randSize() }
+      return next
+    })
 
   return (
     <svg
@@ -85,7 +144,6 @@ export function NewTaipeiBackdrop() {
       preserveAspectRatio="xMidYMid meet"
       className="ntp-backdrop pointer-events-none absolute inset-0 h-full w-full"
     >
-      {/* 整體極慢漂移，讓靜止畫面「活著」 */}
       <g className="ntp-drift">
         {/* 行政區線：靜態結構，載入時描出來 */}
         <g fill="none" stroke="var(--color-edge)" strokeWidth={1} strokeLinejoin="round">
@@ -94,14 +152,14 @@ export function NewTaipeiBackdrop() {
           ))}
         </g>
 
-        {/* 市界：疊一條會「跑光點」的線 —— 一段短亮 dash 沿著邊界繞圈。畫完地圖線才開始跑 */}
+        {/* 市界：一段短亮 dash 沿邊界繞圈。畫完地圖線才開始跑 */}
         <g fill="none" stroke="var(--color-hot)" strokeWidth={1.6} strokeLinecap="round">
           {outline.map((d, i) => (
             <path key={i} d={d} className="ntp-flow" style={{ animationDelay: `${DRAW_S + i * 1.2}s` }} />
           ))}
         </g>
 
-        {PINGS.map((p, i) => (
+        {pings.map((p, i) => (
           <circle
             key={i}
             cx={p.cx}
@@ -109,9 +167,10 @@ export function NewTaipeiBackdrop() {
             r={1}
             fill="var(--color-hot)"
             className="ntp-ping"
+            onAnimationIteration={() => repick(i)}
             style={
               {
-                animationDelay: `${DRAW_S + p.delay}s`,
+                animationDelay: `${DRAW_S + i * 0.7}s`,
                 animationDuration: `${p.dur}s`,
                 '--ping-max': `${p.size}`,
               } as React.CSSProperties
