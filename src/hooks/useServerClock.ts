@@ -1,13 +1,13 @@
 import { useEffect, useRef, useState } from 'react'
 import { parseServerTs } from '@/lib/format'
 
-/* 頭欄時鐘：每次 /healthz 硬對時到後端的 now，中間用 setInterval 內插往前推。
+/* 頭欄時鐘：每次 /healthz 回應時強制對時至後端的 now，其間以 setInterval 內插前推。
    流速 = 連續兩次 now 差 / 真實時間差（後端會調 speed，故每輪重估）：
    - 突變（改速度 / 剛從停表恢復）→ 直接採用，不 EMA
-   - 兩次 now 沒動 → 停表，speed = 0，畫面凍住
+   - 兩次 now 未變化 → 視為停表，speed = 0，畫面靜止
    ★ effect 依 tick（react-query 的 dataUpdatedAt）觸發，不只依 nowStr ——
      demo 走到 demo_until 後 now 不再變，若只看 nowStr，effect 不再跑、
-     速度永遠歸不了 0，時鐘會繼續往前飄。 */
+     速度無法歸零，時鐘會持續前移。 */
 
 interface Sample {
   serverMs: number
@@ -56,7 +56,7 @@ export function useServerClock(
     }
 
     anchor.current = s
-    setDisplay(d) // 硬對時
+    setDisplay(d) // 強制對時
   }, [nowStr, tick, refetch])
 
   useEffect(() => {

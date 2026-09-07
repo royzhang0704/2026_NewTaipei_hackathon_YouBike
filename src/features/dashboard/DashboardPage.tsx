@@ -2,6 +2,7 @@ import { useEffect, useRef } from 'react'
 import { useEventListener } from 'usehooks-ts'
 import { X } from 'lucide-react'
 import { useAppStore } from '@/stores/useAppStore'
+import { useAssistantStore } from '@/stores/useAssistantStore'
 import { useStationDay } from '@/api/queries'
 import { useUrlSync } from '@/hooks/useUrlSync'
 import { ErrorBoundary } from '@/components/ErrorBoundary'
@@ -21,9 +22,10 @@ export default function DashboardPage() {
 
   const { data: day, isPending: dayPending, error: dayError } = useStationDay(selectedUid)
 
-  // Esc → 清除選取
+  // Esc 清除選取。Esc 一次僅關閉最上層：調度助理開啟時由其處理，此處不介入。
+  const assistantOpen = useAssistantStore((s) => s.open)
   useEventListener('keydown', (e) => {
-    if (e.key === 'Escape' && selectedUid) selectStation(null)
+    if (e.key === 'Escape' && selectedUid && !assistantOpen) selectStation(null)
   })
 
   // 選了站 → 把單站檢視面板捲進視野（<xl 流式版；xl 是固定側欄，不需要）
@@ -53,19 +55,21 @@ export default function DashboardPage() {
       {/* B（非 modal 側滑抽屜）：grid 永遠 2 欄（地圖 | 主動警示），尺寸不隨選站變。
           單站檢視 xl 時 absolute 貼在地圖欄右緣、蓋住地圖最右 400px；<xl 正常堆疊在地圖下方。 */}
       <div className="mt-4 grid grid-cols-1 border border-edge bg-panel xl:min-h-0 xl:flex-1 xl:grid-cols-[minmax(0,1fr)_396px] xl:overflow-hidden">
-        {/* 地圖欄（relative：單站抽屜以它的右緣為錨） */}
-        <div className="relative flex min-w-0 flex-col">
+        {/* 地圖欄 */}
+        <div className="flex min-w-0 flex-col">
           <div className="phead flex-none">
             <h3 className="m-0 text-[0.82rem] font-semibold tracking-[0.13em]">空滿熱度圖</h3>
           </div>
 
           <DistrictPicker trailing={<StationSearch />} />
 
-          <div className="h-[clamp(460px,60vh,760px)] xl:h-auto xl:min-h-0 xl:flex-1">
-            <CityMap />
-          </div>
+          {/* 地圖 + 抽屜的定位錨：抽屜只覆蓋這塊（地圖區），不蓋到上方的 phead 與地區篩選列 */}
+          <div className="relative flex min-h-0 flex-1 flex-col">
+            <div className="h-[clamp(460px,60vh,760px)] xl:h-auto xl:min-h-0 xl:flex-1">
+              <CityMap />
+            </div>
 
-          {/* 單站檢視抽屜：選站才在 DOM。<xl 正常區塊；xl absolute 貼右緣不動 grid */}
+          {/* 單站檢視抽屜：選站才在 DOM。<xl 正常區塊；xl absolute 貼地圖區右緣，不影響 grid */}
           {selectedUid && (
             <aside
               ref={detailRef}
@@ -91,7 +95,7 @@ export default function DashboardPage() {
                 ) : dayPending ? (
                   <div className="p-4 text-[0.82rem] text-ink3">查詢中…</div>
                 ) : day ? (
-                  // key＝uid：換站時連同 ErrorBoundary 一起重掛 → 某站 render 炸掉後，
+                  // key 為 uid：換站時連同 ErrorBoundary 一併重新掛載；某站 render 發生例外後，
                   // 改選別站會復原（不會卡在錯誤畫面）。壞掉時只壞這個抽屜，不牽連整頁。
                   <ErrorBoundary
                     key={day.station.uid}
@@ -107,6 +111,7 @@ export default function DashboardPage() {
               </div>
             </aside>
           )}
+          </div>
         </div>
 
         {/* 主動警示：常駐右欄，尺寸不變、滿版可捲 */}
@@ -114,7 +119,7 @@ export default function DashboardPage() {
           <div className="phead flex-none">
             <h3 className="m-0 text-[0.82rem] font-semibold tracking-[0.13em]">主動警示</h3>
           </div>
-          <div className="max-h-[52vh] min-h-0 flex-1 overflow-y-auto xl:max-h-none">
+          <div id="alert-list" className="max-h-[52vh] min-h-0 flex-1 overflow-y-auto xl:max-h-none">
             <AlertList />
           </div>
         </div>

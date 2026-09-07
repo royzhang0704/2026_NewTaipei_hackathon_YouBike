@@ -1,5 +1,5 @@
-/* 調度助理的傳輸層：依 VITE_ASSISTANT_MODE 切 mock / live。
-   UI 只呼叫 sendChat()，不知道背後是規則式假腦還是後端 RAG。 */
+/* 調度助理的傳輸層：依 VITE_ASSISTANT_MODE 切換 mock 與 live。
+   UI 僅呼叫 sendChat()，不需知道回應來自內建邏輯或後端服務。 */
 
 import { getApiBase } from '@/api/client'
 import type { AssistantContext, ChatHandlers, ChatResult, WireMessage } from './types'
@@ -18,7 +18,7 @@ export async function sendChat(
   handlers: ChatHandlers = {},
 ): Promise<ChatResult> {
   if (assistantMode() === 'live') return sendLive(messages, context, handlers)
-  return mockChat(messages, snapshot, handlers)
+  return mockChat(messages, snapshot, handlers, context)
 }
 
 function endpoint(): string {
@@ -38,13 +38,19 @@ async function sendLive(
   })
   if (!res.ok) throw new Error(`assistant ${res.status}`)
 
-  // 非串流 fallback
+  // 非串流回應
   if (res.headers.get('content-type')?.includes('application/json')) {
-    const j = (await res.json()) as { reply?: string; sources?: ChatResult['sources']; actions?: ChatResult['actions'] }
+    const j = (await res.json()) as {
+      reply?: string
+      sources?: ChatResult['sources']
+      actions?: ChatResult['actions']
+      suggestions?: ChatResult['suggestions']
+    }
     if (j.sources) h.onSources?.(j.sources)
     if (j.actions) h.onActions?.(j.actions)
+    if (j.suggestions) h.onSuggestions?.(j.suggestions)
     if (j.reply) h.onDelta?.(j.reply)
-    return { content: j.reply ?? '', sources: j.sources, actions: j.actions }
+    return { content: j.reply ?? '', sources: j.sources, actions: j.actions, suggestions: j.suggestions }
   }
 
   if (!res.body) throw new Error('assistant: 無回應內容')
@@ -53,6 +59,7 @@ async function sendLive(
   let content = ''
   let sources: ChatResult['sources']
   let actions: ChatResult['actions']
+  let suggestions: ChatResult['suggestions']
 
   for (;;) {
     const { done, value } = await reader.read()
@@ -78,10 +85,13 @@ async function sendLive(
       } else if (ev.type === 'actions') {
         actions = ev.items as ChatResult['actions']
         if (actions) h.onActions?.(actions)
+      } else if (ev.type === 'suggestions') {
+        suggestions = ev.items as ChatResult['suggestions']
+        if (suggestions) h.onSuggestions?.(suggestions)
       } else if (ev.type === 'error') {
         throw new Error(ev.message || '助理服務錯誤')
       }
     }
   }
-  return { content, sources, actions }
+  return { content, sources, actions, suggestions }
 }

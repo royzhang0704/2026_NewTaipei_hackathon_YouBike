@@ -120,7 +120,7 @@ svg {
   outline-offset: 2px;
 }
 
-/* KPI 換批的細微 live-update 提示：數字底色閃一下、delta 徽章淡入上浮。刻意短、無彈跳。
+/* KPI 換批時的細微更新提示：數字底色短暫變化、delta 徽章淡入並上移。時長刻意短、無彈跳。
    由 React 端 key 控制觸發（值變才重掛）。prefers-reduced-motion 直接不套。 */
 @keyframes kpi-flash {
   from {
@@ -218,7 +218,7 @@ svg {
    （高風險卡的 kicker 一直被 .kicker 的 ink3 蓋掉，白字上不去）。 */
 @layer components {
   .kicker {
-    /* 0.62rem 在「中」檔只有 ~9.9px、「小」檔 ~9px，中文偏吃力 → 抬到 0.7rem 當地板 */
+    /* 0.62rem 於「中」檔約 9.9px、「小」檔約 9px，中文辨識不易，故以 0.7rem 為下限 */
     font-size: 0.7rem;
     letter-spacing: 0.26em;
     text-transform: uppercase;
@@ -329,4 +329,92 @@ svg {
 }
 .maplibregl-popup-close-button {
   color: var(--color-ink3);
+}
+
+/* ── 登入頁背景：新北市行政區輪廓 + 持續型點綴 ─────────────────
+   靜態輪廓在減少動態時也顯示；draw-on / 市界光點 / 漂移 / ping 只在允許動態時跑。 */
+.ntp-backdrop {
+  -webkit-mask-image: radial-gradient(82% 74% at 50% 46%, #000 18%, transparent 100%);
+  mask-image: radial-gradient(82% 74% at 50% 46%, #000 18%, transparent 100%);
+}
+.ntp-path {
+  opacity: 0.7;
+}
+/* 這三個純裝飾：減少動態時一律不顯示 */
+.ntp-flow,
+.ntp-ping {
+  opacity: 0;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  /* 一次性：輪廓自己描出來 */
+  .ntp-path {
+    stroke-dasharray: 1;
+    stroke-dashoffset: 1;
+    animation: ntp-draw 2.6s ease-out forwards;
+  }
+  /* 持續：整體極慢漂移，靜止畫面才「活著」 */
+  .ntp-drift {
+    animation: ntp-drift 26s ease-in-out infinite;
+    transform-origin: 50% 50%;
+  }
+  /* 持續：一段短亮 dash 沿市界繞圈（多條 ring 各自繞、起點錯開）。
+     用 longhand + fill-mode backwards → 元件的 inline animation-delay（畫完地圖線才開始）
+     期間停在 0%（opacity 0），不會提前露出靜止的 dash。 */
+  .ntp-flow {
+    stroke-dasharray: 3 460;
+    animation-name: ntp-flow;
+    animation-duration: 7s;
+    animation-timing-function: linear;
+    animation-iteration-count: infinite;
+    animation-fill-mode: backwards;
+  }
+  /* 持續：站點 ping（擴散淡出，dur / delay 由元件逐點指定；delay 已含畫線時長） */
+  .ntp-ping {
+    animation-name: ntp-ping;
+    animation-timing-function: ease-out;
+    animation-iteration-count: infinite;
+    animation-fill-mode: backwards;
+  }
+}
+
+@keyframes ntp-draw {
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+@keyframes ntp-drift {
+  0%,
+  100% {
+    transform: translate(-6px, 3px) scale(1);
+  }
+  50% {
+    transform: translate(6px, -4px) scale(1.012);
+  }
+}
+@keyframes ntp-flow {
+  0% {
+    opacity: 0;
+    stroke-dashoffset: 0;
+  }
+  4% {
+    opacity: 0.55;
+  }
+  100% {
+    opacity: 0.55;
+    stroke-dashoffset: -463;
+  }
+}
+@keyframes ntp-ping {
+  0% {
+    opacity: 0;
+    r: 0.5;
+  }
+  16% {
+    opacity: 0.8;
+  }
+  100% {
+    opacity: 0;
+    r: var(--ping-max, 6);
+  }
 }

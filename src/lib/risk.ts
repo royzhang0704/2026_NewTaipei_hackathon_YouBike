@@ -1,10 +1,10 @@
-/* 風險判定 + 調度建議「翻成人話」。
+/* 風險判定與調度建議的可讀化處理。
 
    ★ 文字在這裡（前端）組。後端只給結構化事實：
      k.threshold / k.shortage.level / .slots / .onset / k.baseline
      k.dispatch.action / .bikes / .urgency / .by / .hint
-   這支把那些欄位套成畫面要的 levelWord / sideWord / action / why / support。
-   句子模板刻意寫成「各級平行、每句完整」，避免出現殘句或自相矛盾。
+   此模組將這些欄位轉為畫面所需的 levelWord / sideWord / action / why / support。
+   句子模板刻意採「各等級平行、每句完整」，避免殘句或語意矛盾。
 
    8/31 定案：等級講「多快」不是「多確定」；只出一張卡（取較嚴重一側）；不講機率百分比。 */
 

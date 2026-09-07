@@ -1,179 +1,265 @@
-import { useEffect, useRef, useState } from 'react'
-import { ArrowDown, ArrowUp } from 'lucide-react'
-import { useAppStore } from '@/stores/useAppStore'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { AlertTriangle, ArrowDown, ArrowUp } from 'lucide-react'
+import { useAppStore, type AlertLevel, type AlertSide } from '@/stores/useAppStore'
 import { useAlerts } from '@/api/queries'
-import type { AlertsSummary } from '@/api/types'
 import { cn } from '@/lib/utils'
 
-type DeltaKey = 'high' | 'mid' | 'refill' | 'remove'
-type Deltas = Partial<Record<DeltaKey, number>>
+type Counts = { high: number; mid: number; shortage: number; full: number }
+type Deltas = Partial<Counts>
 
-/** 記住上一批（同一 scope）的 summary，換 origin 時算各數字變化量。
-    換行政區 = scope 變 → 清掉（不能拿全市跟單區比）；首次載入也沒 baseline。
+/** 千分位。待補台數動輒四位數，不分位要數位數。 */
+const nf = (n: number) => n.toLocaleString('en-US')
+
+/** 記住上一批（同一 scope）的計數，換 origin 時算變化量。
+    換行政區 = scope 變 → 清掉（不能拿全市比單區）；首次載入也沒 baseline。
     回放模式下 origin 隨播放時鐘推進，delta 會跟著動。 */
-function useSummaryDelta(
-  summary: AlertsSummary | undefined,
-  origin: string | undefined,
-  scope: string,
-): Deltas {
-  const prev = useRef<{ scope: string; origin: string; summary: AlertsSummary } | null>(null)
+function useCountsDelta(counts: Counts | null, origin: string | undefined, scope: string): Deltas {
+  const prev = useRef<{ scope: string; origin: string; counts: Counts } | null>(null)
   const [deltas, setDeltas] = useState<Deltas>({})
 
   useEffect(() => {
-    if (!summary || !origin) return
+    if (!counts || !origin) return
     const p = prev.current
     if (p && p.scope === scope && p.origin !== origin) {
       setDeltas({
-        high: summary.high - p.summary.high,
-        mid: summary.mid - p.summary.mid,
-        refill: summary.refill.stations - p.summary.refill.stations,
-        remove: summary.remove.stations - p.summary.remove.stations,
+        high: counts.high - p.counts.high,
+        mid: counts.mid - p.counts.mid,
+        shortage: counts.shortage - p.counts.shortage,
+        full: counts.full - p.counts.full,
       })
     } else if (!p || p.scope !== scope) {
       setDeltas({})
     }
-    prev.current = { scope, origin, summary }
-  }, [summary, origin, scope])
+    prev.current = { scope, origin, counts }
+  }, [counts, origin, scope])
 
   return deltas
 }
 
 export function KpiStrip() {
   const townCode = useAppStore((s) => s.townCode)
-  const { data, isError, isPending } = useAlerts({ limit: 1, town_code: townCode || null })
-  const s = data?.summary
-  const deltas = useSummaryDelta(s, data?.origin, townCode)
+  const alertSide = useAppStore((s) => s.alertSide)
+  const alertLevel = useAppStore((s) => s.alertLevel)
+  const setAlertFilter = useAppStore((s) => s.setAlertFilter)
 
-  // 連線異常時原本每格顯示「—」，會被讀成「真的 0 站」。明講是離線。
-  // 有 data = 背景 refetch 失敗但還有上一次結果 → 續顯示數字，只標「可能非最新」。
+  // limit:1000 跟 AlertList 同 key → 共用快取，不多打一次
+  const { data, isError, isPending } = useAlerts({ limit: 1000, town_code: townCode || null })
+  const s = data?.summary
+  const items = useMemo(() => data?.items ?? [], [data])
+
+  // 高/中風險用 summary（伺服器算）；缺車/滿站用 items 現算 —— 跟主動警示 tab 同一套計法，數字對得上
+  const counts = useMemo<Counts | null>(
+    () =>
+      s
+        ? {
+            high: s.high,
+            mid: s.mid,
+            shortage: items.filter((i) => i.side === 'shortage').length,
+            full: items.filter((i) => i.side === 'full').length,
+          }
+        : null,
+    [s, items],
+  )
+  const deltas = useCountsDelta(counts, data?.origin, townCode)
+
   if (isError && !data) {
     return (
-      <div
-        role="status"
-        className="border border-edge bg-panel px-4 py-3 text-[0.8rem] text-hot"
-      >
+      <div role="status" className="border border-edge bg-panel px-4 py-3 text-[0.8rem] text-hot">
         警示資料連線異常，KPI 暫無法顯示。請確認後端。
       </div>
     )
   }
 
-  // 首次載入（尚無任何資料）：骨架，不顯示一排會被誤讀成「真的 0」的「—」
-  if (isPending) {
+  if (isPending || !s || !counts) {
     return (
-      <div
-        role="status"
-        aria-label="載入供需概況…"
-        className="grid grid-cols-2 gap-px border border-edge bg-hair sm:grid-cols-3 lg:grid-cols-6"
-      >
-        {Array.from({ length: 6 }).map((_, i) => (
-          <div key={i} className="bg-panel px-4 py-3">
-            <div className="mb-[9px] h-[0.68rem] w-14 rounded-xs bg-ink/[0.06]" />
-            <div className="h-[1.85rem] w-10 rounded-xs bg-ink/[0.09]" />
-            <div className="mt-[9px] h-[0.71rem] w-16 rounded-xs bg-ink/[0.05]" />
-          </div>
-        ))}
+      <div role="status" aria-label="載入供需概況…" className="border border-edge">
+        <div className="h-[1.85rem] border-b border-hair bg-panel" />
+        <div className="grid grid-cols-2 gap-px bg-hair lg:grid-cols-4">
+          {Array.from({ length: 4 }).map((_, i) => (
+            <div key={i} className="bg-panel px-4 py-3">
+              <div className="mb-[9px] h-[0.68rem] w-16 rounded-xs bg-ink/[0.06]" />
+              <div className="h-[1.85rem] w-14 rounded-xs bg-ink/[0.09]" />
+              <div className="mt-[9px] h-[0.71rem] w-14 rounded-xs bg-ink/[0.05]" />
+            </div>
+          ))}
+        </div>
       </div>
     )
   }
 
-  const figs: {
+  const total = s.stations
+  const covered = total - s.no_forecast
+  const coverageLow = total > 0 && s.no_forecast / total > 0.05
+
+  type Tile = {
     k: string
-    v: number | string
+    v: number
     u: string
-    d: string
-    tone: 'hot' | 'cold' | ''
-    dk?: DeltaKey
-  }[] = [
+    sub: string
+    tone: 'hot' | 'cold'
+    dk: keyof Counts
+    /** 點了套用該篩選並捲到清單（四格都可點，對應主動警示的篩選） */
+    filter: Partial<{ side: AlertSide; level: AlertLevel }>
+    active: boolean
+  }
+
+  const tiles: Tile[] = [
     {
-      k: '監測站點',
-      v: s?.stations ?? '—',
+      k: '高風險',
+      v: counts.high,
       u: '站',
-      d: `含預測 ${(s?.stations ?? 0) - (s?.no_forecast ?? 0)} 站`,
-      tone: '',
-    },
-    { k: '高風險', v: s?.high ?? '—', u: '站', d: '需立即處理', tone: s?.high ? 'hot' : '', dk: 'high' },
-    { k: '中風險', v: s?.mid ?? '—', u: '站', d: '1 小時內越線', tone: s?.mid ? 'hot' : '', dk: 'mid' },
-    {
-      k: '需補車',
-      v: s?.refill.stations ?? '—',
-      u: '站',
-      d: `共 ${s?.refill.bikes ?? 0} 台`,
-      tone: s?.refill.stations ? 'hot' : '',
-      dk: 'refill',
+      sub: '已越線',
+      tone: 'hot',
+      dk: 'high',
+      filter: { side: 'all', level: 'high' },
+      active: alertLevel === 'high' && alertSide === 'all',
     },
     {
-      k: '需取車',
-      v: s?.remove.stations ?? '—',
+      k: '中風險',
+      v: counts.mid,
       u: '站',
-      d: `共 ${s?.remove.bikes ?? 0} 台`,
-      tone: s?.remove.stations ? 'cold' : '',
-      dk: 'remove',
+      sub: '1 小時內越線',
+      tone: 'hot',
+      dk: 'mid',
+      filter: { side: 'all', level: 'mid' },
+      active: alertLevel === 'mid' && alertSide === 'all',
     },
-    { k: '暫不派車', v: s?.hold ?? '—', u: '站', d: '會自行退燒', tone: '' },
+    {
+      k: '缺車',
+      v: counts.shortage,
+      u: '站',
+      sub: `建議補 ${nf(s.refill.bikes)} 台`,
+      tone: 'hot',
+      dk: 'shortage',
+      filter: { side: 'shortage', level: 'all' },
+      active: alertSide === 'shortage' && alertLevel === 'all',
+    },
+    {
+      k: '滿站',
+      v: counts.full,
+      u: '站',
+      sub: `建議取 ${nf(s.remove.bikes)} 台`,
+      tone: 'cold',
+      dk: 'full',
+      filter: { side: 'full', level: 'all' },
+      active: alertSide === 'full' && alertLevel === 'all',
+    },
   ]
 
-  // gap-px + bg-hair：格線交給 1px 間隙，任何欄數（2 / 3 / 6）都自動對齊，不必再按斷點
-  // 算 nth-child。原本 (i+1)%6 寫死 6 欄，在 2 / 3 欄佈局下每列最右格會多畫一條 border-r，
-  // 貼著外框變雙線。
   return (
-    <div className="border border-edge">
+    <div role="group" aria-label="供需概況" className="border border-edge">
       {isError && (
         <p role="status" className="border-b border-hair bg-panel px-4 py-[6px] text-[0.68rem] tracking-[0.04em] text-hot">
           連線異常，以下數字可能非最新
         </p>
       )}
-      <div className="grid grid-cols-2 gap-px bg-hair sm:grid-cols-3 lg:grid-cols-6">
-        {figs.map((f) => {
-          const d = f.dk ? deltas[f.dk] : undefined
-          const moved = !!d // 非 0 = 這批有變動 → 觸發閃爍 + 徽章
-          return (
-            <div key={f.k} className="relative bg-panel px-4 py-3">
-              {f.tone && (
-                <span
-                  className={cn(
-                    'absolute inset-y-0 left-0 w-[2px]',
-                    f.tone === 'hot' ? 'bg-hot' : 'bg-cold',
-                  )}
-                />
-              )}
-              <span className="mb-[9px] block text-[0.68rem] tracking-[0.16em] text-ink3">{f.k}</span>
+
+      {/* 資料信心度：模型覆蓋率（掉 >5% → 琥珀 + 警示圖示，不靠顏色單獨表意）＋「暫不派車」註記。
+          不放「資料截至」——那在「供需概況」副標已有。 */}
+      <p
+        className={cn(
+          'flex flex-wrap items-center gap-x-2 border-b border-hair bg-panel px-4 py-[7px] text-[0.68rem] tracking-[0.04em]',
+          coverageLow ? 'text-hot' : 'text-ink3',
+        )}
+      >
+        {coverageLow && <AlertTriangle className="size-[11px] flex-none" aria-hidden />}
+        <span>
+          模型覆蓋 {nf(covered)} / {nf(total)} 站
+        </span>
+        {coverageLow && (
+          <>
+            <span aria-hidden>·</span>
+            <span>{nf(s.no_forecast)} 站無預測數據，未納入下列統計</span>
+          </>
+        )}
+        {s.hold > 0 && (
+          <>
+            <span aria-hidden>·</span>
+            <span>缺車站另有 {nf(s.hold)} 站預期自行退燒、未計入</span>
+          </>
+        )}
+      </p>
+
+      {/* gap-px + bg-hair：格線交給 1px 間隙，2 / 4 欄都自動對齊 */}
+      <div className="grid grid-cols-2 gap-px bg-hair lg:grid-cols-4">
+        {tiles.map((t) => {
+          const d = deltas[t.dk]
+          const moved = !!d
+          const deltaLabel = moved ? `，較上一批次${d! > 0 ? '增加' : '減少'} ${Math.abs(d!)}` : ''
+          const label = `${t.k}，${nf(t.v)} ${t.u}，${t.sub}${deltaLabel}，${
+            t.active ? '按下取消篩選' : '按下篩選警示清單'
+          }`
+
+          const inner = (
+            <>
+              <span
+                className={cn('absolute inset-y-0 left-0 w-[2px]', t.tone === 'hot' ? 'bg-hot' : 'bg-cold')}
+                aria-hidden
+              />
+              <span
+                className={cn(
+                  'mb-[9px] flex items-center gap-1 text-[0.68rem] tracking-[0.16em]',
+                  t.active ? 'text-ink' : 'text-ink3',
+                )}
+              >
+                {t.k}
+                {t.active && (
+                  <span className="font-normal tracking-normal text-[0.68rem] text-ink3">篩選中</span>
+                )}
+              </span>
               <div
                 // key 綁 delta 值：新一批數字有動就重掛 → kpi-flash 重播
                 key={moved ? `v${d}` : 'v'}
                 className={cn(
-                  // 數字 2rem → 1.85rem：標籤抬到 0.68rem 後，收緊「標籤↔數字」比例
                   'flex items-baseline font-serif text-[1.85rem] leading-none tracking-[-0.035em] tabular-nums',
                   moved && 'kpi-flash',
-                  f.tone === 'hot' ? 'text-hot' : f.tone === 'cold' ? 'text-cold' : 'text-ink',
+                  t.tone === 'hot' ? 'text-hot' : 'text-cold',
                 )}
               >
-                {f.v}
-                {/* 單位：sans、降一階明度、清掉數字用的負字距，跟大數字拉開層次也不貼死 */}
+                {nf(t.v)}
                 <span className="ml-1.5 font-sans text-[0.76rem] font-normal tracking-normal text-ink3">
-                  {f.u}
+                  {t.u}
                 </span>
               </div>
               <div className="mt-[9px] flex items-center gap-x-2 text-[0.71rem] text-ink3">
-                <span>{f.d}</span>
+                <span>{t.sub}</span>
                 {moved && (
                   <span
                     key={`d${d}`}
-                    aria-label={`較上批${d! > 0 ? '增加' : '減少'} ${Math.abs(d!)}`}
+                    aria-hidden
                     className={cn(
                       'kpi-rise inline-flex items-center gap-[1px] tabular-nums',
                       d! > 0 ? 'text-hot' : 'text-ink2',
                     )}
                   >
                     {d! > 0 ? (
-                      <ArrowUp className="size-[10px]" aria-hidden />
+                      <ArrowUp className="size-[10px]" />
                     ) : (
-                      <ArrowDown className="size-[10px]" aria-hidden />
+                      <ArrowDown className="size-[10px]" />
                     )}
                     {Math.abs(d!)}
                   </span>
                 )}
               </div>
-            </div>
+            </>
+          )
+
+          return (
+            <button
+              key={t.k}
+              type="button"
+              // active 再按 → 取消篩選（回全部），跟 AlertList 嚴重度 chip 的 toggle-off 一致
+              onClick={() => setAlertFilter(t.active ? { side: 'all', level: 'all' } : t.filter)}
+              aria-pressed={t.active}
+              aria-controls="alert-list"
+              aria-label={label}
+              className={cn(
+                'relative bg-panel px-4 py-3 text-left transition-colors hover:bg-raise focus-visible:-outline-offset-2',
+                t.active && 'bg-raise',
+              )}
+            >
+              {inner}
+            </button>
           )
         })}
       </div>

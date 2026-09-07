@@ -23,7 +23,9 @@ function districtBounds(name?: string): LngLatBounds | null {
 }
 
 /** 對焦：指定區框該區多邊形；「全部」框站點實際分布（山區無站，多邊形會偏移）。
-    townName 變、或 frameNonce +1（點地區 chip / 按「回到範圍」）時重新框。 */
+    只在「冷載入 / URL 還原」「frameNonce +1（點地區 chip、按回到範圍、切字級）」
+    「towns query 晚回來讓 townName 由 '' 補成區名」時重新框。
+    跨區選站的靜默換區（setTownQuiet）不重框 —— 鏡頭交給 CityMap 的選站 flyTo。 */
 export function useDistrictFocus(
   mapRef: React.RefObject<MapRef | null>,
   ready: boolean,
@@ -33,17 +35,30 @@ export function useDistrictFocus(
 ) {
   const didInitial = useRef(false)
   const prevNonce = useRef<number | null>(null)
+  const prevTown = useRef<string | null>(null)
 
   useEffect(() => {
     const map = mapRef.current
     if (!map || !ready) return
 
-    // 冷載入 / URL 還原視野（第一次跑，或 towns query 晚回來讓 townName 由 '' 補成區名）→
-    // 直接「就位」不做動畫，否則會看到地圖從全市 fly 到該區、像閃一下。
-    // frameNonce 真的 +1（點地區 chip /「回到範圍」）才是使用者要求的重框 → 用動畫過場。
-    const byUser = prevNonce.current !== null && frameNonce !== prevNonce.current
+    const firstRun = prevNonce.current === null
+    const nonceChanged = !firstRun && frameNonce !== prevNonce.current
+    // towns query 晚回來，townName 由 '' 補成區名 → 屬冷載入就位，不是使用者換區
+    const townResolved = prevTown.current === '' && townName !== ''
     prevNonce.current = frameNonce
-    const duration = byUser ? 700 : 0
+    prevTown.current = townName
+
+    // 靜默換區（跨區選取站點）：townName 改變但 nonce 未遞增時不重新框景，避免鏡頭大幅拉遠再拉近
+    if (!firstRun && !nonceChanged && !townResolved) return
+
+    // 冷載入 / URL 還原 → 直接就位不動畫；使用者按鈕要求的重框（nonce +1）才用動畫過場。
+    // prefers-reduced-motion → 一律就位。
+    const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches
+    const duration = nonceChanged && !reduce ? 700 : 0
+
+    // 抽屜（單站檢視）關掉後 transform 上可能還留著 right padding，fitBounds 不會去動它
+    // → 整張圖會偏左。重框前先歸零，讓 fitBounds 的置中計算對到完整視窗。
+    map.setPadding({ top: 0, bottom: 0, left: 0, right: 0 })
 
     if (townName) {
       const b = districtBounds(townName)

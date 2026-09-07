@@ -7,7 +7,8 @@ import { X } from 'lucide-react'
 
 const SHORTCUTS: { keys: string[]; label: string }[] = [
   { keys: ['/'], label: '聚焦站點搜尋' },
-  { keys: ['Esc'], label: '清除選取的站' },
+  { keys: ['A'], label: '開 / 關調度助理' },
+  { keys: ['Esc'], label: '關閉最上層浮層（助理 → 單站檢視）' },
   { keys: ['?'], label: '開 / 關這份快捷鍵' },
 ]
 

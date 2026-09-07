@@ -5,6 +5,8 @@ import { create } from 'zustand'
 
 export type Theme = 'light' | 'dark'
 export type FontScale = 'sm' | 'md' | 'lg'
+export type AlertSide = 'all' | 'shortage' | 'full'
+export type AlertLevel = 'all' | 'high' | 'mid'
 
 /** 文字大小 → root font-size 的縮放比（必須跟 index.css 的 [data-font] 對齊）。
  *  小只降 4%（本來標籤就偏小），大給 +25% 才對低視力 / 老花有意義。 */
@@ -35,11 +37,23 @@ interface SelectionSlice {
   selectStation: (uid: string | null) => void
   /** 換區會一併清掉選取的站，並重新框鏡頭；點目前地區則只重新框 */
   selectTown: (code: string) => void
+  /** 只改地區（讓遮罩 / chip / 警示清單跟著選取的站一致），不重新框鏡頭、不清選取。
+      供「跨區選取站點」使用；地圖僅由選站的 flyTo 移動，避免鏡頭大幅拉遠再拉近。 */
+  setTownQuiet: (code: string) => void
   /** 縮放/拖曳後把鏡頭框回目前選取的預設範圍 */
   refocus: () => void
 }
 
-export const useAppStore = create<SelectionSlice & ThemeSlice>((set, get) => ({
+/* 主動警示清單的篩選 —— 提到 store 讓上方 KPI 也能寫（點 KPI = 套用該篩選）。
+   AlertList 讀它渲染 chip 狀態與清單；KPI 讀它決定 aria-pressed / 高亮。 */
+interface AlertFilterSlice {
+  alertSide: AlertSide
+  alertLevel: AlertLevel
+  /** 傳 partial：只帶到的欄位會變，沒帶的維持 */
+  setAlertFilter: (f: Partial<{ side: AlertSide; level: AlertLevel }>) => void
+}
+
+export const useAppStore = create<SelectionSlice & ThemeSlice & AlertFilterSlice>((set, get) => ({
   theme: readInitialTheme(),
   toggleTheme: () => {
     const next: Theme = get().theme === 'dark' ? 'light' : 'dark'
@@ -77,5 +91,16 @@ export const useAppStore = create<SelectionSlice & ThemeSlice>((set, get) => ({
       frameNonce: s.frameNonce + 1,
     }))
   },
+  setTownQuiet: (code) => {
+    if (code !== get().townCode) set({ townCode: code })
+  },
   refocus: () => set((s) => ({ frameNonce: s.frameNonce + 1 })),
+
+  alertSide: 'all',
+  alertLevel: 'all',
+  setAlertFilter: (f) =>
+    set((s) => ({
+      alertSide: f.side ?? s.alertSide,
+      alertLevel: f.level ?? s.alertLevel,
+    })),
 }))

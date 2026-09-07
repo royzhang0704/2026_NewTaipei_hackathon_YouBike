@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { AlertTriangle, History } from 'lucide-react'
+import { AlertTriangle } from 'lucide-react'
 import { useAlerts, useHealth } from '@/api/queries'
 import { isReplayMode, mdhm, parseServerTs } from '@/lib/format'
 import { cn } from '@/lib/utils'
@@ -7,11 +7,12 @@ import { cn } from '@/lib/utils'
 /* 「供需概況」副標＝讀這頁數字的前提，兩種時間軸分開處理：
 
    正式時間軸（healthz 的 now ≈ 真實現在）：重點是資料新鮮度。data_age_min（後端算好）
-   > 60 分 = 跳過一個批次週期以上 → ⚠ 過期。門檻取 2×批次間隔（30 分）：落後一個
-   週期是正常噪音（當格還沒關），兩個才是故障，警示才不會誤報。
+   > 60 分 = 跳過一個批次週期以上 → ⚠ 過期。門檻取 2×批次間隔（30 分）：落後一個週期屬正常波動（當前格尚未關閉），落後兩個週期才視為異常，以免誤報。
 
-   示範回放（healthz 的 now 本身就是歷史時刻 → isHistoricalClock）：歷史資料是刻意的
-   展示素材，中性語氣、不用警示色、不出現 ⚠，只標「示範資料 · 歷史回放」。
+   示範回放（healthz 的 now 本身就是歷史時刻 → isHistoricalClock）：副標刻意跟「即時正常」
+   長一樣（每 30 分批次預測 · 資料截至 · 預測至），只差不算「下次更新」倒數，也不出現 ⚠
+   「資料延遲」——回放時 data_age_min 沒意義。是否為回放，由頭欄時鐘（回放時間 ×N）標示，
+   副標不再放置模式標記，避免展示感。
    （不分「回放中／已結束」——判「已結束」要靠 forecast_end，但 jobs.demo --start 會把它
    清成 null，方案 A 無 tick loop 又不會重寫，這訊號結構性失效。時鐘停表時頭欄的 ×N
    會消失，那已是「沒在前進」的隱性提示。）
@@ -53,7 +54,7 @@ export function OverviewCaption() {
   ) : null
   const fcEnd = health?.forecast_end ?? null
 
-  // 永遠渲染（含手機）——「資料延遲」「示範資料」是判讀前提，不該因視窗窄消失。
+  // 一律渲染（含手機）：「資料延遲」是判讀前提，不應因視窗過窄而隱藏。
   // 只有冗長的時刻段落（資料截至 / 預測至）在 <sm 收起。
   const base =
     'm-0 inline-flex flex-wrap items-center gap-x-2 gap-y-1 border-l border-hair pl-3 text-[0.76rem] tracking-[0.02em]'
@@ -72,7 +73,7 @@ export function OverviewCaption() {
     </span>
   )
 
-  // 示範回放：中性語氣，不警示
+  // 示範回放：中性語氣、不警示、不放模式 chip —— 跟「即時正常」同一個長相，只少「下次更新」倒數
   if (replay) {
     return (
       <p
@@ -82,14 +83,9 @@ export function OverviewCaption() {
         aria-atomic="true"
         className={cn(base, 'anim-soft text-ink2')}
       >
-        <span className="inline-flex items-center gap-1 rounded-xs border border-hair px-[5px] py-px text-[0.68rem] tracking-[0.06em] text-ink3">
-          <History className="size-[11px]" aria-hidden />
-          示範資料
-        </span>
-        <span>歷史回放</span>
-        {originTime && timeSeg('資料截至', originTime)}
-        {sep}
         <span>每 30 分批次預測</span>
+        {originTime && timeSeg('資料截至', originTime)}
+        {fcEnd && timeSeg('預測至', <time dateTime={toISO(fcEnd)}>{mdhm(fcEnd)}</time>)}
       </p>
     )
   }

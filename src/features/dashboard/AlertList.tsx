@@ -1,13 +1,12 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
-import { useAppStore } from '@/stores/useAppStore'
+import { useEffect, useMemo, useRef } from 'react'
+import { useAppStore, type AlertSide } from '@/stores/useAppStore'
 import { useAlerts } from '@/api/queries'
 import { segChip } from '@/components/ui/segChip'
 import { cn } from '@/lib/utils'
 
 const LV: Record<string, string> = { high: '高', mid: '中', low: '低', none: '' }
 
-type Side = 'all' | 'shortage' | 'full'
-const SIDES: { key: Side; label: string }[] = [
+const SIDES: { key: AlertSide; label: string }[] = [
   { key: 'all', label: '全部' },
   { key: 'shortage', label: '缺車' },
   { key: 'full', label: '滿站' },
@@ -18,14 +17,16 @@ export function AlertList() {
   const selectedUid = useAppStore((s) => s.selectedUid)
   const selectStation = useAppStore((s) => s.selectStation)
 
-  const [side, setSide] = useState<Side>('all')
-  const [highOnly, setHighOnly] = useState(false)
+  // 篩選狀態在 store：上方 KPI 也能寫（點 KPI = 套用該篩選）
+  const side = useAppStore((s) => s.alertSide)
+  const level = useAppStore((s) => s.alertLevel)
+  const setAlertFilter = useAppStore((s) => s.setAlertFilter)
 
   // 換地區 / 換篩選 → 清單內容整批換掉，把外層捲軸帶回頂端（否則會停在舊位置看到空白）
   const topRef = useRef<HTMLDivElement>(null)
   useEffect(() => {
     topRef.current?.scrollIntoView({ block: 'nearest' })
-  }, [townCode, side, highOnly])
+  }, [townCode, side, level])
 
   // 抓整包（跟 CityMap 的 {limit:1000, town_code} 同 key，共用快取不多打），側別 / 等級全在前端篩。
   // 1000 是後端硬上限（station_controller Query le=1000）；實際警示數遠低於此，unloaded 只是防呆。
@@ -43,9 +44,17 @@ export function AlertList() {
 
   const filtered = useMemo(() => {
     let list = side === 'all' ? all : all.filter((i) => i.side === side)
-    if (highOnly) list = list.filter((i) => i.level === 'high')
+    if (level !== 'all') list = list.filter((i) => i.level === level)
     return list
-  }, [all, side, highOnly])
+  }, [all, side, level])
+
+  // 報讀者狀態訊息：篩選一變、count 一變就唸「（高風險・）缺車・共 N 筆待處理」
+  const scopeLabel = [
+    level === 'high' ? '高風險' : level === 'mid' ? '中風險' : '',
+    side === 'shortage' ? '缺車' : side === 'full' ? '滿站' : '',
+  ]
+    .filter(Boolean)
+    .join('・')
   // 後端 limit 1000；真的更多才提示（一般全新北也就幾百筆）
   const unloaded = data ? Math.max(0, data.total - all.length) : 0
 
@@ -56,30 +65,42 @@ export function AlertList() {
     <>
       <div ref={topRef} aria-hidden />
       <div className="sticky top-0 z-10 border-b border-hair bg-panel">
+        {/* 方向（全部/缺車/滿站）＋ 嚴重度（高/中）。嚴重度兩顆包成一組 → 大字級塞不下時
+            整組一起換到第二行（不會只有「中風險」落單），讀起來就是乾淨的兩排。 */}
         <div className="flex flex-wrap items-center gap-[6px] px-3 pt-[7px]">
           {SIDES.map(({ key, label }) => (
             <button
               key={key}
               type="button"
-              onClick={() => setSide(key)}
+              onClick={() => setAlertFilter({ side: key })}
               aria-pressed={side === key}
               className={cn(segChip(side === key), 'px-2 py-[3px] text-[0.68rem]')}
             >
               {label} <span className="tabular-nums opacity-70">{count[key]}</span>
             </button>
           ))}
-          {/* 「只看高風險」＝ on/off toggle，跟上面同一套 chip 外觀（原本是原生 checkbox，樣式不一致） */}
-          <button
-            type="button"
-            onClick={() => setHighOnly((v) => !v)}
-            aria-pressed={highOnly}
-            className={cn(segChip(highOnly), 'ml-auto px-2 py-[3px] text-[0.68rem]')}
-          >
-            只看高風險
-          </button>
+          {/* 嚴重度：高 / 中 互斥 toggle（點目前選中的 → 回「全部風險」）。跟上方 KPI 連動同一個 store 值 */}
+          <div className="flex gap-[6px]">
+            {(['high', 'mid'] as const).map((lv) => (
+              <button
+                key={lv}
+                type="button"
+                onClick={() => setAlertFilter({ level: level === lv ? 'all' : lv })}
+                aria-pressed={level === lv}
+                className={cn(segChip(level === lv), 'px-2 py-[3px] text-[0.68rem]')}
+              >
+                {lv === 'high' ? '高風險' : '中風險'}
+              </button>
+            ))}
+          </div>
         </div>
-        <div className="flex items-center justify-between px-4 py-[5px] text-[0.68rem] tracking-[0.06em] text-ink3">
-          <span>共 {filtered.length} 筆待處理</span>
+        <div
+          role="status"
+          className="flex items-center justify-between px-4 py-[5px] text-[0.68rem] tracking-[0.06em] text-ink3"
+        >
+          <span>
+            {scopeLabel && `${scopeLabel}・`}共 {filtered.length} 筆待處理
+          </span>
           {unloaded > 0 && <span>資料庫另有 {unloaded} 筆，請用地區縮小</span>}
         </div>
       </div>
@@ -95,7 +116,7 @@ export function AlertList() {
           {filtered.map((it, i) => {
             const sel = selectedUid === it.station_uid
             // anim-row：key 穩定 → 只有「新出現的站」重掛播放（換批後看得出哪站新冒出來）；
-            // 首次載入整批一起淡入。離場不做（省一個 AnimatePresence 依賴）。
+            // 首次載入時整批淡入；不處理離場，以免引入 AnimatePresence 依賴。
             return (
               <li key={it.station_uid} className="anim-row border-b border-hair">
                 {/* 原本是 <li onClick>：鍵盤 Tab 不到、Enter 無效、報讀者不當它可互動。

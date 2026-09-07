@@ -17,7 +17,7 @@ export function StationSearch() {
   const stations = useStations().data
   const townCode = useAppStore((s) => s.townCode)
   const selectedUid = useAppStore((s) => s.selectedUid)
-  const selectTown = useAppStore((s) => s.selectTown)
+  const setTownQuiet = useAppStore((s) => s.setTownQuiet)
   const selectStation = useAppStore((s) => s.selectStation)
 
   const [open, setOpen] = useState(false)
@@ -55,8 +55,9 @@ export function StationSearch() {
       onChange={(uid) => {
         if (!uid) return
         const st = stations?.find((s) => s.uid === uid)
-        // 選了某區、但搜到的站不在該區 → 清掉區篩選（否則地圖上看不到那個站）
-        if (st && townCode && st.town_code !== townCode) selectTown('')
+        // 搜到的站不在目前選的區 → 靜默把區切到該站所屬區（遮罩 / chip 跟著一致），
+        // 不重框地圖，鏡頭只由選站的 flyTo 帶過去
+        if (st && townCode && st.town_code !== townCode) setTownQuiet(st.town_code)
         selectStation(uid)
       }}
       items={items}

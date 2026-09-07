@@ -11,7 +11,7 @@ import { EChart } from '@/components/EChart'
 
 type Palette = ReturnType<typeof palette>
 
-/* echarts option 是 JS 物件、拿不到 CSS 變數，所以切主題時重讀 documentElement 的
+/* echarts option 為 JS 物件，無法取得 CSS 變數，故切換主題時重新讀取 documentElement 的
    computed style（ForecastChart 在會隨主題切換的右欄，用 root 主題正確）。 */
 function palette() {
   const s = getComputedStyle(document.documentElement)
@@ -152,7 +152,7 @@ function buildOption(
 
 
   /* ② 危險區淡色：低水位以下 = 缺車危險、高水位以上 = 滿站危險（高水位線有畫才蓋）。
-     極淡（0.07），只當背景線索——曲線在不在危險帶一眼看出，不搶預測帶（0.2）。 */
+     極淡（0.07），僅作背景線索；使曲線是否進入危險帶一目了然，且不干擾預測帶（0.2）。 */
   const dangerArea =
     cap && T != null
       ? {

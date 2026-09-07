@@ -11,6 +11,7 @@ import { useAppStore, type FontScale } from '@/stores/useAppStore'
 import { ShortcutsHelp } from '@/components/ShortcutsHelp'
 import { ErrorBoundary } from '@/components/ErrorBoundary'
 import { AssistantWidget } from '@/features/assistant/AssistantWidget'
+import { UserMenu } from '@/features/auth/UserMenu'
 import { cn } from '@/lib/utils'
 
 const FONT_STEPS: { key: FontScale; label: string }[] = [
@@ -134,6 +135,8 @@ export function AppShell() {
           >
             {theme === 'dark' ? <Sun className="size-[15px]" /> : <Moon className="size-[15px]" />}
           </button>
+
+          <UserMenu />
         </div>
       </header>
 

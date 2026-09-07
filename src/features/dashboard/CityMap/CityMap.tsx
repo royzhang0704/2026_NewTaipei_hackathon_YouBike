@@ -59,7 +59,8 @@ export function CityMap() {
 
   const { data: stations, isPending: stPending, isError: stError } = useStations()
   const { data: towns } = useTowns()
-  const { data: alerts } = useAlerts({ limit: 1000, town_code: townCode || null })
+  // 取全市資料（不隨 townCode 縮小）：圖層依行政區自行過濾，使跨區選取的站點亦有正確風險樣式，且不產生樣式閃爍
+  const { data: alerts } = useAlerts({ limit: 1000 })
 
   const townName = useMemo(
     () => towns?.find((t) => t.town_code === townCode)?.town ?? '',
@@ -95,7 +96,7 @@ export function CityMap() {
   useDistrictFocus(mapRef, ready, townName, stations, frameNonce)
 
   // 容器尺寸一變就 resize()：flex 高度鏈落定、中文字型載入、重整帶抽屜、breakpoint、切字級
-  // 任一造成的容器變化，react-map-gl 內建偵測 +（dev）reuseMaps 有時序漏補 → 這裡兜底。
+  // 上述任一情況造成的容器尺寸變化，react-map-gl 內建偵測與 dev 模式 reuseMaps 偶有時序遺漏，此處作為後備。
   useEffect(() => {
     const el = wrapRef.current
     if (!el) return
@@ -223,17 +224,27 @@ export function CityMap() {
 
   // 選了站 → 飛到「沒被單站抽屜蓋住的可視區中央」；抽屜關了 → 清掉 padding。
   // padding.right = 抽屜寬（xl 才有）。一律置中（不只 z<12 / 出界才飛），否則站會卡在
-  // 邊緣或被抽屜蓋住；已放大就不再拉近。padding 也讓之後的區框景一起扣掉抽屜。
-  // 冷載入帶 ?station= → 第一次就位不動畫；之後使用者點選站點才 fly。
+  // 邊緣或被抽屜蓋住。縮放夾在 13–16：太遠拉近、鑽太深收回一點留 context、已在區間內不動
+  // —— 每次選站落在可預期的尺度，相機移動最小（不論同區 / 跨區、地圖現在多大都一致）。
+  // 冷載入帶 ?station= → 第一次就位不動畫；prefers-reduced-motion → 一律就位。
   const selFirst = useRef(true)
+  const selPrevNonce = useRef(frameNonce)
   useEffect(() => {
     const map = mapRef.current?.getMap()
     if (!ready || !map) return
+    const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches
+    // 換區（selectTown）會一併清掉選取的站並 bump frameNonce → useDistrictFocus 正在重框該區。
+    // 這時別在下面對相機下 easeTo，否則會打斷那個 fitBounds、地圖停在舊位置。
+    const nonceBumped = frameNonce !== selPrevNonce.current
+    selPrevNonce.current = frameNonce
     if (!selectedUid) {
       const first = selFirst.current
       selFirst.current = false
-      // 取消選取：抽屜收掉 → padding 400→0 用動畫帶回（setPadding 是瞬間的，會「閃一下」）
-      map.easeTo({ padding: { top: 0, bottom: 0, left: 0, right: 0 }, duration: first ? 0 : 400 })
+      // 換區造成的取消選取 → useDistrictFocus 正在重框（它會先清掉抽屜殘留的 transform padding
+      // 再算 fitBounds）→ 這裡不要再對相機下 easeTo，否則會打斷那個 fitBounds。
+      if (nonceBumped) return
+      // 僅關閉抽屜：padding 由 400 回到 0，以動畫過渡（setPadding 為瞬間套用，會造成跳動）
+      map.easeTo({ padding: { top: 0, bottom: 0, left: 0, right: 0 }, duration: first || reduce ? 0 : 400 })
       return
     }
     const st = stations?.find((s) => s.uid === selectedUid)
@@ -244,12 +255,16 @@ export function CityMap() {
     selFirst.current = false
     map.flyTo({
       center: [st.lon, st.lat],
-      zoom: z < 12 ? 14 : z,
+      zoom: Math.min(16, Math.max(13, z)),
       padding: { top: 0, bottom: 0, left: 0, right: drawer },
-      duration: first ? 0 : 500,
+      duration: first || reduce ? 0 : 500,
       bearing: 0,
       pitch: 0,
     })
+    // frameNonce / fontScale 刻意不進 deps：兩者都是「讀當下值」而非要靠它們重跑
+    //   · frameNonce → 只拿來判斷「這次取消選取是不是換區造成的」
+    //   · fontScale 變動由上面的 firstFont effect 專責重新擺位
+    // oxlint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedUid, ready, stations])
 
   return (
@@ -274,7 +289,7 @@ export function CityMap() {
           // ★ 等容器尺寸真的定型才 setReady → 框景（useDistrictFocus / flyTo）對得上實際大小。
           //   落定＝影響版面的字型就位（phead / chip 列 reflow）＋ 兩個 rAF ＋ resize。
           //   內文 CJK 走系統字（PingFang / 系統預設），即時可用；Noto 下載完只影響少數
-          //   serif 標題，不會再撐高地圖欄 → 等待上限抓短一點（350ms），冷快取也不會卡住。
+          //   serif 標題，不再增加地圖欄高度，故等待上限縮短為 350ms，冷快取時亦不致長時間等待。
           const settle = () => {
             m.resize()
             requestAnimationFrame(() =>
@@ -411,7 +426,7 @@ export function CityMap() {
         </span>
       </div>
 
-      {/* 站點資料未到 / 失敗：底圖照顯示，中央放一顆狀態 pill（不整片遮死） */}
+      {/* 站點資料未載入或失敗：底圖仍顯示，中央放置狀態標籤，不完全遮蔽 */}
       {(stError || (stPending && !stations)) && (
         <div className="anim-fade pointer-events-none absolute inset-0 z-20 flex items-center justify-center">
           <div
