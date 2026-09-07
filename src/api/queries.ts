@@ -4,9 +4,14 @@ import { qk } from './queryKeys'
 import type { AlertsResponse, Health, Station, StationDay, Town } from './types'
 
 /* 快取策略：
-   - towns / stations：開頁抓一次，長 staleTime
-   - health：每 30s 重抓（頂欄時鐘）
+   - towns / stations：開頁抓一次，長 staleTime；僅在 error 狀態下每 15s 重試，
+     成功即停 —— 後端在初次載入時掛掉、之後恢復時能自動補上，不需重整
+   - health：每 8s 重抓（頂欄時鐘）
    - alerts / day：批次預測每 30 分更新，staleTime 60s */
+
+// 靜態資料：平時不輪詢；載入失敗時每 15s 重試直到成功
+const retryWhileError = (q: { state: { status: string } }) =>
+  q.state.status === 'error' ? 15_000 : (false as const)
 
 export function useHealth() {
   return useQuery({
@@ -23,6 +28,7 @@ export function useTowns() {
     queryKey: qk.towns,
     queryFn: ({ signal }) => api<Town[]>('/api/v1/towns', { signal }),
     staleTime: 60 * 60_000,
+    refetchInterval: retryWhileError,
   })
 }
 
@@ -31,6 +37,7 @@ export function useStations() {
     queryKey: qk.stations,
     queryFn: ({ signal }) => api<Station[]>('/api/v1/stations', { signal }),
     staleTime: 60 * 60_000,
+    refetchInterval: retryWhileError,
   })
 }
 

@@ -436,7 +436,7 @@ export function CityMap() {
               stError ? 'border-hot text-hot' : 'border-edge text-ink2',
             )}
           >
-            {stError ? '地圖資料載入失敗，請確認後端' : '載入地圖資料…'}
+            {stError ? '目前無法載入站點資料，請稍後再試' : '載入地圖資料…'}
           </div>
         </div>
       )}

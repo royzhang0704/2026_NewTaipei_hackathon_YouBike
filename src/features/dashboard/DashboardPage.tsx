@@ -37,9 +37,9 @@ export default function DashboardPage() {
   }, [selectedUid])
 
   return (
-    // xl：撐滿 AppShell 的 <main>（flex-1 of h-dvh），成直欄；地圖區用 flex-1 吃剩餘高度。<xl 流式捲動
-    // 2xl（壁掛 / 大監視器）放寬上限，多塞地圖和警示列、不浪費兩側留白
-    <div className="mx-auto max-w-[1780px] px-4 pb-8 md:px-6 xl:flex xl:h-full xl:min-h-0 xl:flex-col 2xl:max-w-[2160px]">
+    // xl：撐滿 AppShell 的 <main>（flex-1 of h-dvh），成直欄；地圖區用 flex-1 吃剩餘高度。<xl 流式捲動。
+    // w-full + max-w：寬度固定不隨內容（地圖 canvas）變 → 線上 / 離線版面一致。
+    <div className="mx-auto w-full max-w-[1780px] px-4 pb-8 md:px-6 xl:flex xl:h-full xl:min-h-0 xl:flex-col">
       <div className="flex items-baseline gap-3 py-4">
         <h2
           aria-describedby="overview-caption"
@@ -54,7 +54,7 @@ export default function DashboardPage() {
 
       {/* B（非 modal 側滑抽屜）：grid 永遠 2 欄（地圖 | 主動警示），尺寸不隨選站變。
           單站檢視 xl 時 absolute 貼在地圖欄右緣、蓋住地圖最右 400px；<xl 正常堆疊在地圖下方。 */}
-      <div className="mt-4 grid grid-cols-1 border border-edge bg-panel xl:min-h-0 xl:flex-1 xl:grid-cols-[minmax(0,1fr)_396px] xl:overflow-hidden">
+      <div className="mt-4 grid w-full grid-cols-1 border border-edge bg-panel xl:min-h-0 xl:w-full xl:flex-1 xl:grid-cols-[minmax(0,1fr)_396px] xl:overflow-hidden">
         {/* 地圖欄 */}
         <div className="flex min-w-0 flex-col">
           <div className="phead flex-none">
@@ -65,8 +65,12 @@ export default function DashboardPage() {
 
           {/* 地圖 + 抽屜的定位錨：抽屜只覆蓋這塊（地圖區），不蓋到上方的 phead 與地區篩選列 */}
           <div className="relative flex min-h-0 flex-1 flex-col">
-            <div className="h-[clamp(460px,60vh,760px)] xl:h-auto xl:min-h-0 xl:flex-1">
-              <CityMap />
+            {/* 地圖用 absolute inset-0 填滿：maplibre canvas 的像素寬不會回頭撐大 grid 欄
+                （離線時 fitBounds 不跑、canvas 尺寸沒被重算，會把 1fr 欄卡在某個寬度） */}
+            <div className="relative h-[clamp(460px,60vh,760px)] overflow-hidden xl:h-auto xl:min-h-0 xl:flex-1">
+              <div className="absolute inset-0">
+                <CityMap />
+              </div>
             </div>
 
           {/* 單站檢視抽屜：選站才在 DOM。<xl 正常區塊；xl absolute 貼地圖區右緣，不影響 grid */}
@@ -90,7 +94,7 @@ export default function DashboardPage() {
               <div className="min-h-0 flex-1 overflow-y-auto">
                 {dayError ? (
                   <div className="m-4 border-l-2 border-hot bg-hot-wash px-3 py-2 text-[0.82rem]">
-                    {dayError.message || '查詢失敗'}
+                    {dayError.message || '目前無法載入此站點資料'}
                   </div>
                 ) : dayPending ? (
                   <div className="p-4 text-[0.82rem] text-ink3">查詢中…</div>
@@ -101,7 +105,7 @@ export default function DashboardPage() {
                     key={day.station.uid}
                     fallback={
                       <div className="m-4 border-l-2 border-hot bg-hot-wash px-3 py-2 text-[0.82rem] leading-[1.5] text-ink2">
-                        單站檢視載入失敗，請改選其他站或重新整理。
+                        此站點資料載入失敗，請改選其他站或重新整理。
                       </div>
                     }
                   >

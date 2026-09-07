@@ -17,7 +17,8 @@
         var d = document.documentElement
         var t = localStorage.getItem('yb_theme')
         if (t !== 'light' && t !== 'dark')
-          t = matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark'
+          // 只有系統明確偏好深色才用深色；明確淺色或無偏好一律淺色
+          t = matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
         d.dataset.theme = t
         var f = localStorage.getItem('yb_font')
         if (f === 'sm' || f === 'lg') d.dataset.font = f

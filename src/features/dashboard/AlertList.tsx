@@ -58,7 +58,7 @@ export function AlertList() {
   // 後端 limit 1000；真的更多才提示（一般全新北也就幾百筆）
   const unloaded = data ? Math.max(0, data.total - all.length) : 0
 
-  if (isError) return <div className="p-4 text-[0.8rem] text-ink3">警示載入失敗，請確認後端。</div>
+  if (isError) return <div className="p-4 text-[0.8rem] text-ink3">目前無法載入警示資料，請稍後再試。</div>
   if (isPending) return <div className="p-4 text-[0.8rem] text-ink3">載入中…</div>
 
   return (

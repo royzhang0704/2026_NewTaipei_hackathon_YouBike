@@ -65,7 +65,7 @@ export function KpiStrip() {
   if (isError && !data) {
     return (
       <div role="status" className="border border-edge bg-panel px-4 py-3 text-[0.8rem] text-hot">
-        警示資料連線異常，KPI 暫無法顯示。請確認後端。
+        目前無法連線至資料服務，供需概況暫時無法顯示。
       </div>
     )
   }
@@ -150,7 +150,7 @@ export function KpiStrip() {
     <div role="group" aria-label="供需概況" className="border border-edge">
       {isError && (
         <p role="status" className="border-b border-hair bg-panel px-4 py-[6px] text-[0.68rem] tracking-[0.04em] text-hot">
-          連線異常，以下數字可能非最新
+          連線不穩，以下數字可能非最新
         </p>
       )}
 
