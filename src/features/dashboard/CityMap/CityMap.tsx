@@ -272,7 +272,9 @@ export function CityMap() {
           m.touchZoomRotate.disableRotation()
           m.keyboard.disableRotation()
           // ★ 等容器尺寸真的定型才 setReady → 框景（useDistrictFocus / flyTo）對得上實際大小。
-          //   落定＝中文字型載入完（會讓 phead / chip 列 reflow）＋ 兩個 rAF ＋ resize。
+          //   落定＝影響版面的字型就位（phead / chip 列 reflow）＋ 兩個 rAF ＋ resize。
+          //   內文 CJK 走系統字（PingFang / 系統預設），即時可用；Noto 下載完只影響少數
+          //   serif 標題，不會再撐高地圖欄 → 等待上限抓短一點（350ms），冷快取也不會卡住。
           const settle = () => {
             m.resize()
             requestAnimationFrame(() =>
@@ -291,7 +293,7 @@ export function CityMap() {
               settle()
             }
             fonts.ready.then(go, go)
-            setTimeout(go, 500) // 保險：字型 promise 卡住也不擋 ready
+            setTimeout(go, 350)
           } else settle()
         }}
         onError={(e) => console.error('[CityMap]', e.error?.message ?? e)}
@@ -389,6 +391,24 @@ export function CityMap() {
           <span className="inline-block size-[11px] rounded-full border-2 border-ink" />
           已選取
         </div>
+      </div>
+
+      {/* 冷載入：地圖框到 URL 視野（?town= / ?station=）之前先整片蓋住，
+          避免看到預設視野 → 再跳一下。框景完成（ready）後淡出。 */}
+      <div
+        aria-hidden={ready}
+        className={cn(
+          'absolute inset-0 z-30 flex items-center justify-center bg-panel transition-opacity duration-300',
+          ready ? 'pointer-events-none opacity-0' : 'opacity-100',
+        )}
+      >
+        <span className="flex items-center gap-2 text-[0.78rem] text-ink3">
+          <span
+            className="size-3 animate-spin rounded-full border border-current border-t-transparent motion-reduce:animate-none"
+            aria-hidden
+          />
+          載入地圖…
+        </span>
       </div>
 
       {/* 站點資料未到 / 失敗：底圖照顯示，中央放一顆狀態 pill（不整片遮死） */}
