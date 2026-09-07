@@ -8,6 +8,6 @@ export function segChip(active: boolean) {
     'rounded-xs border tracking-[0.04em] transition-colors',
     active
       ? 'border-ink bg-ink font-semibold text-bg'
-      : 'border-hair text-ink2 hover:border-edge hover:text-ink',
+      : 'border-control text-ink2 hover:border-ink3 hover:text-ink',
   )
 }

@@ -10,14 +10,16 @@
   --color-panel: #13161b;
   --color-raise: #181c22;
 
-  --color-hair: rgba(255, 255, 255, 0.085);
-  --color-edge: rgba(255, 255, 255, 0.16);
+  --color-hair: rgba(255, 255, 255, 0.085); /* 純裝飾分隔線 */
+  --color-edge: rgba(255, 255, 255, 0.16); /* 結構邊界（header / footer / 浮層）*/
+  /* control：ghost 型互動元件的框（chip / 輸入框 / 分段鈕）。edge(0.16) 對 panel 僅 ~1.5:1，
+     未達 WCAG 1.4.11 UI 元件 3:1 → 加一階到 ~3:1，未選中的按鈕才看得出是可點的控制項。 */
+  --color-control: rgba(255, 255, 255, 0.36);
 
   --color-ink: #e9ebee;
   --color-ink2: #a2a8b2;
-  /* ink3：次要／說明文字。#6e747e 在 panel 上僅 ~3.85:1，未達 WCAG AA 內文 4.5:1，
-     而 kicker / 軸標 / KPI 描述大量用它且字小 → 提到 #868c96（panel 上 ~5.3:1）。 */
-  --color-ink3: #868c96;
+  /* ink3：次要／說明文字。大量小字都用它 → 提到 #8f959f（panel 上 ~5.8:1，留 AA margin）。 */
+  --color-ink3: #8f959f;
 
   --color-hot: #ee5a34; /* 無車可借 / 缺車 */
   --color-cold: #5591f2; /* 無位可還 / 滿站 */
@@ -53,6 +55,7 @@
   --color-raise: #e7e0d3;
   --color-hair: rgba(24, 26, 30, 0.1);
   --color-edge: rgba(24, 26, 30, 0.22);
+  --color-control: rgba(24, 26, 30, 0.42); /* 白底上 ~3:1，見上方說明 */
   --color-ink: #1a1c20;
   --color-ink2: #474d57;
   /* ink3：小字說明大量用它，#61666f 在白底 ~5.4:1，過 WCAG AA 內文 */
@@ -167,6 +170,12 @@ svg {
     transform: translateY(3px);
   }
 }
+@keyframes panel-in {
+  from {
+    opacity: 0;
+    transform: translateX(14px);
+  }
+}
 /* 背景刷新指示（Tailwind animate-spin）在減少動態時停轉 */
 @media (prefers-reduced-motion: reduce) {
   .spin-ind {
@@ -188,6 +197,9 @@ svg {
   }
   .anim-row {
     animation: row-in 0.18s ease-out;
+  }
+  .anim-panel {
+    animation: panel-in 0.2s ease-out;
   }
 }
 
@@ -220,7 +232,10 @@ svg {
     display: flex;
     align-items: center;
     gap: 12px;
-    padding: 11px 16px;
+    /* 固定高：有無按鈕的 phead（地圖 / 警示 / 單站檢視）分隔線都對齊。
+       垂直置中交給 align-items，不靠 padding。 */
+    min-height: 2.875rem;
+    padding: 6px 16px;
     border-bottom: 1px solid var(--color-hair);
     background: var(--color-raise);
   }

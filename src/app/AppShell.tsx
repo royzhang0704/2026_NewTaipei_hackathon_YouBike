@@ -72,7 +72,7 @@ export function AppShell() {
         <div className="ml-auto flex items-center gap-3">
           {/* 資料時間：狀態＋時鐘收成一顆 chip；資料 / 預測涵蓋範圍放 title 提示 */}
           <div
-            className="inline-flex h-8 items-center gap-2 rounded-xs border border-edge bg-panel px-3"
+            className="inline-flex h-8 items-center gap-2 rounded-xs border border-control bg-panel px-3"
             title={dataTo || fcTo ? `資料到 ${dataTo ?? '—'}　·　預測到 ${fcTo ?? '—'}` : undefined}
           >
             <span
@@ -102,7 +102,7 @@ export function AppShell() {
           <div
             role="group"
             aria-label="文字大小"
-            className="hidden h-8 items-center overflow-hidden rounded-xs border border-edge bg-panel sm:flex"
+            className="hidden h-8 items-center overflow-hidden rounded-xs border border-control bg-panel sm:flex"
           >
             {FONT_STEPS.map(({ key, label }, i) => (
               <button
@@ -129,7 +129,7 @@ export function AppShell() {
             type="button"
             onClick={toggleTheme}
             aria-label={theme === 'dark' ? '切換為淺色主題' : '切換為深色主題'}
-            className="flex size-8 items-center justify-center rounded-xs border border-edge bg-panel text-ink3 hover:text-ink"
+            className="flex size-8 items-center justify-center rounded-xs border border-control bg-panel text-ink3 hover:text-ink"
           >
             {theme === 'dark' ? <Sun className="size-[15px]" /> : <Moon className="size-[15px]" />}
           </button>

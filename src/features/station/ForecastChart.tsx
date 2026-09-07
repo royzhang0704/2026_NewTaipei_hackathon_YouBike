@@ -137,6 +137,8 @@ function buildOption(
           fontSize: f9,
           opacity: 0.85,
           position: 'end',
+          // 往上推離頂端刻度，浮在 plot 上方 → 不會被當成「最上面那條線 = 高水位」
+          offset: [0, -14],
         },
       })
     } else {
@@ -147,6 +149,27 @@ function buildOption(
       })
     }
   }
+
+
+  /* ② 危險區淡色：低水位以下 = 缺車危險、高水位以上 = 滿站危險（高水位線有畫才蓋）。
+     極淡（0.07），只當背景線索——曲線在不在危險帶一眼看出，不搶預測帶（0.2）。 */
+  const dangerArea =
+    cap && T != null
+      ? {
+          silent: true,
+          data: [
+            [{ yAxis: 0, itemStyle: { color: C.hot, opacity: 0.07 } }, { yAxis: T }],
+            ...(highOnEdge
+              ? []
+              : [
+                  [
+                    { yAxis: cap - T, itemStyle: { color: C.cold, opacity: 0.07 } },
+                    { yAxis: yMax as number },
+                  ],
+                ]),
+          ],
+        }
+      : undefined
 
   const series: Record<string, unknown>[] = [
     {
@@ -160,6 +183,7 @@ function buildOption(
       symbol: 'none',
       silent: true,
       z: 1,
+      markArea: dangerArea,
     },
     {
       name: 'band',
@@ -232,7 +256,7 @@ function buildOption(
     grid: {
       left: Math.round(34 * fs),
       right: Math.round(84 * fs), // 容得下最長的「高水位 NN 台 ↑」
-      top: Math.round(22 * fs),
+      top: Math.round(28 * fs), // 頂端 headroom：容「現在 N」＋往上推的「高水位 ↑」
       bottom: Math.round(24 * fs),
     },
     tooltip: {

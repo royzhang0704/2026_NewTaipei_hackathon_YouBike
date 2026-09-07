@@ -4,7 +4,6 @@ import { X } from 'lucide-react'
 import { useAppStore } from '@/stores/useAppStore'
 import { useStationDay } from '@/api/queries'
 import { useUrlSync } from '@/hooks/useUrlSync'
-import { cn } from '@/lib/utils'
 import { KpiStrip } from './KpiStrip'
 import { OverviewCaption } from './OverviewCaption'
 import { AlertList } from './AlertList'
@@ -26,8 +25,8 @@ export default function DashboardPage() {
     if (e.key === 'Escape' && selectedUid) selectStation(null)
   })
 
-  // 選了站 → 把「單站檢視」捲進視野
-  const detailRef = useRef<HTMLDivElement>(null)
+  // 選了站 → 把單站檢視面板捲進視野（<xl 流式版；xl 是固定側欄，不需要）
+  const detailRef = useRef<HTMLElement>(null)
   useEffect(() => {
     if (selectedUid) {
       detailRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
@@ -50,10 +49,11 @@ export default function DashboardPage() {
 
       <KpiStrip />
 
-      {/* 桌機：地圖 + 右 rail 吃 flex 剩餘高度（不再 calc 魔術數字），這一區不整頁捲；<xl 流式捲動 */}
-      <div className="mt-4 grid grid-cols-1 border border-edge bg-panel xl:min-h-0 xl:flex-1 xl:grid-cols-[1fr_396px] xl:overflow-hidden">
-        {/* 地圖欄 */}
-        <div className="flex min-w-0 flex-col">
+      {/* B（非 modal 側滑抽屜）：grid 永遠 2 欄（地圖 | 主動警示），尺寸不隨選站變。
+          單站檢視 xl 時 absolute 貼在地圖欄右緣、蓋住地圖最右 400px；<xl 正常堆疊在地圖下方。 */}
+      <div className="mt-4 grid grid-cols-1 border border-edge bg-panel xl:min-h-0 xl:flex-1 xl:grid-cols-[minmax(0,1fr)_396px] xl:overflow-hidden">
+        {/* 地圖欄（relative：單站抽屜以它的右緣為錨） */}
+        <div className="relative flex min-w-0 flex-col">
           <div className="phead flex-none">
             <h3 className="m-0 text-[0.82rem] font-semibold tracking-[0.13em]">空滿熱度圖</h3>
           </div>
@@ -63,51 +63,47 @@ export default function DashboardPage() {
           <div className="h-[clamp(460px,60vh,760px)] xl:h-auto xl:min-h-0 xl:flex-1">
             <CityMap />
           </div>
+
+          {/* 單站檢視抽屜：選站才在 DOM。<xl 正常區塊；xl absolute 貼右緣不動 grid */}
+          {selectedUid && (
+            <aside
+              ref={detailRef}
+              aria-label="單站檢視"
+              className="anim-panel flex scroll-mt-16 flex-col border-t border-edge bg-panel xl:absolute xl:inset-y-0 xl:right-0 xl:z-20 xl:w-[clamp(360px,25rem,460px)] xl:border-l xl:border-t-0 xl:shadow-[-10px_0_28px_rgba(0,0,0,.38)]"
+            >
+              <div className="phead flex-none">
+                <h3 className="m-0 text-[0.82rem] font-semibold tracking-[0.13em]">單站檢視</h3>
+                <button
+                  onClick={() => selectStation(null)}
+                  aria-label="關閉單站檢視"
+                  className="ml-auto -mr-1 flex items-center gap-1 rounded-xs px-1.5 py-1 text-[0.7rem] tracking-[0.08em] text-ink3 hover:bg-hair hover:text-ink"
+                >
+                  <X className="size-3.5" />
+                  關閉
+                </button>
+              </div>
+              <div className="min-h-0 flex-1 overflow-y-auto">
+                {dayError ? (
+                  <div className="m-4 border-l-2 border-hot bg-hot-wash px-3 py-2 text-[0.82rem]">
+                    {dayError.message || '查詢失敗'}
+                  </div>
+                ) : dayPending ? (
+                  <div className="p-4 text-[0.82rem] text-ink3">查詢中…</div>
+                ) : day ? (
+                  <StationDetail key={day.station.uid} day={day} />
+                ) : null}
+              </div>
+            </aside>
+          )}
         </div>
 
-        {/* 右 rail：主動警示（上，內捲）＋ 單站檢視（下，選站時展開內捲） */}
+        {/* 主動警示：常駐右欄，尺寸不變、滿版可捲 */}
         <div className="flex min-w-0 flex-col border-t border-edge xl:h-full xl:overflow-hidden xl:border-l xl:border-t-0">
           <div className="phead flex-none">
             <h3 className="m-0 text-[0.82rem] font-semibold tracking-[0.13em]">主動警示</h3>
           </div>
-          <div
-            className={cn(
-              'overflow-y-auto',
-              selectedUid
-                ? 'max-h-[32vh] xl:max-h-none xl:h-[34%] xl:shrink-0'
-                : 'max-h-[48vh] xl:max-h-none xl:min-h-0 xl:flex-1',
-            )}
-          >
+          <div className="max-h-[52vh] min-h-0 flex-1 overflow-y-auto xl:max-h-none">
             <AlertList />
-          </div>
-
-          <div ref={detailRef} className="phead flex-none scroll-mt-16 border-t border-edge">
-            <h3 className="m-0 text-[0.82rem] font-semibold tracking-[0.13em]">單站檢視</h3>
-            {selectedUid ? (
-              <button
-                onClick={() => selectStation(null)}
-                className="ml-auto flex items-center gap-1 rounded-xs border border-hair px-2 py-[3px] text-[0.7rem] tracking-[0.08em] text-ink3 hover:border-edge hover:text-ink"
-              >
-                <X className="size-3" />
-                清除
-              </button>
-            ) : (
-              <span className="ml-auto text-[0.7rem] tracking-[0.1em] text-ink3">含未來三小時預測</span>
-            )}
-          </div>
-
-          <div className={cn(selectedUid && 'xl:min-h-0 xl:flex-1 xl:overflow-y-auto')}>
-            {!selectedUid ? (
-              <div className="p-4 text-[0.82rem] text-ink3">點地圖站點或上方警示展開。</div>
-            ) : dayError ? (
-              <div className="m-4 border-l-2 border-hot bg-hot-wash px-3 py-2 text-[0.82rem]">
-                {dayError.message || '查詢失敗'}
-              </div>
-            ) : dayPending ? (
-              <div className="p-4 text-[0.82rem] text-ink3">查詢中…</div>
-            ) : day ? (
-              <StationDetail key={day.station.uid} day={day} />
-            ) : null}
           </div>
         </div>
       </div>

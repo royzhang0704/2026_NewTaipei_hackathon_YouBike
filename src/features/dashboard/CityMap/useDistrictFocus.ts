@@ -32,29 +32,37 @@ export function useDistrictFocus(
   frameNonce: number,
 ) {
   const didInitial = useRef(false)
+  const prevNonce = useRef<number | null>(null)
 
   useEffect(() => {
     const map = mapRef.current
     if (!map || !ready) return
 
+    // 冷載入 / URL 還原視野（第一次跑，或 towns query 晚回來讓 townName 由 '' 補成區名）→
+    // 直接「就位」不做動畫，否則會看到地圖從全市 fly 到該區、像閃一下。
+    // frameNonce 真的 +1（點地區 chip /「回到範圍」）才是使用者要求的重框 → 用動畫過場。
+    const byUser = prevNonce.current !== null && frameNonce !== prevNonce.current
+    prevNonce.current = frameNonce
+    const duration = byUser ? 700 : 0
+
     if (townName) {
       const b = districtBounds(townName)
-      if (b) map.fitBounds(b, { padding: 48, duration: 700, bearing: 0, pitch: 0 })
+      if (b) map.fitBounds(b, { padding: 48, duration, bearing: 0, pitch: 0 })
       return
     }
     // 全部行政區：框站點分布
     const b = new LngLatBounds()
     for (const s of stations ?? []) if (hasCoord(s)) b.extend([s.lon, s.lat])
-    if (!b.isEmpty()) map.fitBounds(b, { padding: 40, duration: 700, bearing: 0, pitch: 0 })
+    if (!b.isEmpty()) map.fitBounds(b, { padding: 40, duration, bearing: 0, pitch: 0 })
   }, [mapRef, ready, townName, frameNonce])
 
-  // 站點第一次到齊時（load 當下站表通常還沒回來），若停在「全部」補一次對焦
+  // 站點第一次到齊時（load 當下站表通常還沒回來），若停在「全部」補一次對焦（就位、不動畫）
   useEffect(() => {
     const map = mapRef.current
     if (didInitial.current || !map || !ready || townName || !(stations?.length ?? 0)) return
     didInitial.current = true
     const b = new LngLatBounds()
     for (const s of stations!) if (hasCoord(s)) b.extend([s.lon, s.lat])
-    if (!b.isEmpty()) map.fitBounds(b, { padding: 40, duration: 700, bearing: 0, pitch: 0 })
+    if (!b.isEmpty()) map.fitBounds(b, { padding: 40, duration: 0, bearing: 0, pitch: 0 })
   }, [mapRef, ready, townName, stations])
 }

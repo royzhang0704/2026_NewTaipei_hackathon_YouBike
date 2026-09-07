@@ -75,7 +75,7 @@ export function Combobox({
       <Popover.Trigger
         disabled={disabled}
         className={cn(
-          'flex w-full min-w-[210px] max-w-[330px] items-center gap-[10px] rounded-xs border border-edge bg-panel px-[10px] py-2 text-left text-[0.86rem] text-ink hover:bg-raise disabled:cursor-default disabled:opacity-40 data-[state=open]:border-ink2',
+          'flex w-full min-w-[210px] max-w-[330px] items-center gap-[10px] rounded-xs border border-control bg-panel px-[10px] py-2 text-left text-[0.86rem] text-ink hover:bg-raise disabled:cursor-default disabled:opacity-40 data-[state=open]:border-ink2',
           triggerClassName,
         )}
       >

@@ -10,7 +10,7 @@ import MapGL, {
 import type { FeatureCollection } from 'geojson'
 import { Maximize } from 'lucide-react'
 import { useAlerts, useStations, useTowns } from '@/api/queries'
-import { useAppStore } from '@/stores/useAppStore'
+import { FONT_PCT, useAppStore } from '@/stores/useAppStore'
 import { cn } from '@/lib/utils'
 import type { AlertItem } from '@/api/types'
 import districtsGeo from '@/assets/newtaipei-districts.json'
@@ -27,6 +27,9 @@ import {
 import { buildMask } from './mask'
 import { hasCoord, useDistrictFocus } from './useDistrictFocus'
 
+/** 單站抽屜的實際渲染寬（DashboardPage: clamp(360px, 25rem, 460px)，rem 隨字級縮放）。 */
+const drawerWidth = (fs: number) => Math.min(460, Math.max(360, Math.round(400 * fs)))
+
 interface HoverInfo {
   lng: number
   lat: number
@@ -41,6 +44,7 @@ interface HoverInfo {
 /** 高度由外層容器決定（桌機 flex 填滿、手機給固定高）。 */
 export function CityMap() {
   const mapRef = useRef<MapRef>(null)
+  const wrapRef = useRef<HTMLDivElement>(null)
   const [ready, setReady] = useState(false)
   const [hover, setHover] = useState<HoverInfo | null>(null)
   const hoverClear = useRef<ReturnType<typeof setTimeout>>(undefined)
@@ -90,10 +94,19 @@ export function CityMap() {
 
   useDistrictFocus(mapRef, ready, townName, stations, frameNonce)
 
+  // 容器尺寸一變就 resize()：flex 高度鏈落定、中文字型載入、重整帶抽屜、breakpoint、切字級
+  // 任一造成的容器變化，react-map-gl 內建偵測 +（dev）reuseMaps 有時序漏補 → 這裡兜底。
+  useEffect(() => {
+    const el = wrapRef.current
+    if (!el) return
+    const ro = new ResizeObserver(() => mapRef.current?.getMap()?.resize())
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [])
+
   // 切字級 → rem 型版面 reflow → 地圖容器尺寸變。等 reflow 落定後：
-  //  · 沒選站（預設 / 區框景）→ refocus() 用新容器重跑框景，跟直接點地區 chip 一致，
-  //    之後再點 chip 不會再縮放一下。
-  //  · 放大在某站 → 只保留現在的地理範圍（跳回全市很怪）。
+  //  · 選了站 → 重新把該站擺回「可視區（扣掉抽屜）中央」，跟選站當下的行為一致。
+  //  · 沒選站 → refocus() 用新容器重跑框景，跟直接點地區 chip 一致。
   const firstFont = useRef(true)
   useEffect(() => {
     if (!ready) return
@@ -104,17 +117,25 @@ export function CityMap() {
     const id = requestAnimationFrame(() => {
       const m = mapRef.current?.getMap()
       if (!m) return
-      if (useAppStore.getState().selectedUid) {
-        const b = m.getBounds()
-        m.resize()
-        m.fitBounds(b, { duration: 0, padding: 0 })
+      m.resize()
+      const uid = useAppStore.getState().selectedUid
+      const st = uid ? stations?.find((s) => s.uid === uid) : null
+      if (st && hasCoord(st)) {
+        const drawer = window.matchMedia('(min-width: 1280px)').matches ? drawerWidth(FONT_PCT[fontScale]) : 0
+        m.flyTo({
+          center: [st.lon, st.lat],
+          zoom: m.getZoom(),
+          padding: { top: 0, bottom: 0, left: 0, right: drawer },
+          duration: 0,
+          bearing: 0,
+          pitch: 0,
+        })
       } else {
-        m.resize()
         refocus()
       }
     })
     return () => cancelAnimationFrame(id)
-  }, [fontScale, ready, refocus])
+  }, [fontScale, ready, refocus, stations])
 
   // 高風險站雷達 ping：每幀更新 st-pulse。z<10.5（全市視野）透明度歸 0；
   // 縮放到單區尺度（點 chip 或手動放大都算）才動。振幅隨 zoom 增強、有下限。
@@ -200,20 +221,39 @@ export function CityMap() {
     })
   }, [])
 
-  // 選了站 → 飛過去：zoom 太小（大範圍看不清）或站不在視野內都飛
+  // 選了站 → 飛到「沒被單站抽屜蓋住的可視區中央」；抽屜關了 → 清掉 padding。
+  // padding.right = 抽屜寬（xl 才有）。一律置中（不只 z<12 / 出界才飛），否則站會卡在
+  // 邊緣或被抽屜蓋住；已放大就不再拉近。padding 也讓之後的區框景一起扣掉抽屜。
+  // 冷載入帶 ?station= → 第一次就位不動畫；之後使用者點選站點才 fly。
+  const selFirst = useRef(true)
   useEffect(() => {
     const map = mapRef.current?.getMap()
-    if (!ready || !map || !selectedUid) return
-    const st = stations?.find((s) => s.uid === selectedUid)
-    if (!st || !hasCoord(st)) return
-    const z = map.getZoom()
-    if (z < 12 || !map.getBounds().contains([st.lon, st.lat])) {
-      map.flyTo({ center: [st.lon, st.lat], zoom: Math.max(z, 14), duration: 800, bearing: 0, pitch: 0 })
+    if (!ready || !map) return
+    if (!selectedUid) {
+      const first = selFirst.current
+      selFirst.current = false
+      // 取消選取：抽屜收掉 → padding 400→0 用動畫帶回（setPadding 是瞬間的，會「閃一下」）
+      map.easeTo({ padding: { top: 0, bottom: 0, left: 0, right: 0 }, duration: first ? 0 : 400 })
+      return
     }
+    const st = stations?.find((s) => s.uid === selectedUid)
+    if (!st || !hasCoord(st)) return // 站表還沒到 → 先不動，也不消耗 selFirst
+    const drawer = window.matchMedia('(min-width: 1280px)').matches ? drawerWidth(FONT_PCT[fontScale]) : 0
+    const z = map.getZoom()
+    const first = selFirst.current
+    selFirst.current = false
+    map.flyTo({
+      center: [st.lon, st.lat],
+      zoom: z < 12 ? 14 : z,
+      padding: { top: 0, bottom: 0, left: 0, right: drawer },
+      duration: first ? 0 : 500,
+      bearing: 0,
+      pitch: 0,
+    })
   }, [selectedUid, ready, stations])
 
   return (
-    <div className="relative h-full w-full">
+    <div ref={wrapRef} className="relative h-full w-full">
       <MapGL
         ref={mapRef}
         reuseMaps
@@ -231,7 +271,28 @@ export function CityMap() {
           const m = e.target
           m.touchZoomRotate.disableRotation()
           m.keyboard.disableRotation()
-          setReady(true)
+          // ★ 等容器尺寸真的定型才 setReady → 框景（useDistrictFocus / flyTo）對得上實際大小。
+          //   落定＝中文字型載入完（會讓 phead / chip 列 reflow）＋ 兩個 rAF ＋ resize。
+          const settle = () => {
+            m.resize()
+            requestAnimationFrame(() =>
+              requestAnimationFrame(() => {
+                m.resize()
+                setReady(true)
+              }),
+            )
+          }
+          const fonts = document.fonts
+          if (fonts && fonts.status !== 'loaded') {
+            let done = false
+            const go = () => {
+              if (done) return
+              done = true
+              settle()
+            }
+            fonts.ready.then(go, go)
+            setTimeout(go, 500) // 保險：字型 promise 卡住也不擋 ready
+          } else settle()
         }}
         onError={(e) => console.error('[CityMap]', e.error?.message ?? e)}
         onClick={onClick}
