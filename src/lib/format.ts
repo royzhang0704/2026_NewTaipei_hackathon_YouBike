@@ -27,3 +27,21 @@ export function parseServerTs(ts: string | null | undefined): Date | null {
 export function fmtClock(d: Date): string {
   return `${p2(d.getMonth() + 1)}/${p2(d.getDate())} ${p2(d.getHours())}:${p2(d.getMinutes())}:${p2(d.getSeconds())}`
 }
+
+/** /healthz 的 now 本身就是歷史時刻（離瀏覽器時鐘 > 30 分）= 走在回放 / 示範時間軸上。
+ *  關鍵：真實環境即使排程掛掉，healthz 的 now 仍是當下（只有 current_slot 落後）；
+ *  只有 demo 回放會讓 now 本身跑到過去。這個比較能乾淨區分「示範」與「真故障」。
+ *  （/healthz 沒吐 is_demo 旗標，只能這樣推。30 分：遠大於時鐘偏差、遠小於數月的 demo。） */
+export function isHistoricalClock(nowStr: string | null | undefined): boolean {
+  const d = parseServerTs(nowStr)
+  return !!d && Math.abs(d.getTime() - Date.now()) > 30 * 60_000
+}
+
+/** 是否走在回放／示範時間軸上（不是「現在」）。now 本身是歷史時刻，或後端有靜態凍結旗標
+ *  virtual_now，兩者任一即算。AppShell 與 OverviewCaption 共用同一判定，避免
+ *  「header 說回放、caption 說故障」那種兩處分岔。 */
+export function isReplayMode(
+  health: { now?: string | null; virtual_now?: string | null } | null | undefined,
+): boolean {
+  return isHistoricalClock(health?.now) || !!health?.virtual_now
+}

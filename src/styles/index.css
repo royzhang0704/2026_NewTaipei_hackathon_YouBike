@@ -15,7 +15,9 @@
 
   --color-ink: #e9ebee;
   --color-ink2: #a2a8b2;
-  --color-ink3: #6e747e;
+  /* ink3：次要／說明文字。#6e747e 在 panel 上僅 ~3.85:1，未達 WCAG AA 內文 4.5:1，
+     而 kicker / 軸標 / KPI 描述大量用它且字小 → 提到 #868c96（panel 上 ~5.3:1）。 */
+  --color-ink3: #868c96;
 
   --color-hot: #ee5a34; /* 無車可借 / 缺車 */
   --color-cold: #5591f2; /* 無位可還 / 滿站 */
@@ -26,14 +28,61 @@
   --color-cold-wash: rgba(85, 145, 242, 0.12);
 
   --radius-xs: 2px;
+  --radius-sm: 4px; /* 浮層（Popover / 卡片）用；2px 在大面積元素偏生硬 */
+
+  --color-focus: #7cb0ff; /* 鍵盤焦點框：刻意跟 cold(#5591f2) 分開，focus 是 UI chrome 不是資料 */
 
   --font-serif: 'Noto Serif TC', 'Songti TC', 'Times New Roman', Georgia, serif;
   --font-sans: 'Helvetica Neue', Helvetica, 'PingFang TC', 'Noto Sans TC', Arial, sans-serif;
 }
 
+/* ── 主題切換 ──────────────────────────────────────────────────
+   深色是預設，值就放 @theme（Tailwind 由此生 utility，也寫進 :root）。
+   這裡只放 [data-theme='light'] 覆寫。初始 data-theme 由 index.html 的 inline
+   script 在 first paint 前寫進 documentElement（不閃白）；只掛在根，沒有巢狀島。
+   ⚠ 若之後要「淺色頁裡開 <div data-theme='dark'> 深色島」，得補一個
+   [data-theme='dark'] 區塊，內容鏡射 @theme 全部同名 token（含 --color-focus）。 */
+:root {
+  color-scheme: dark;
+}
+[data-theme='light'] {
+  color-scheme: light;
+  --color-bg: #f4f3ef;
+  --color-panel: #ffffff;
+  /* raise：#edeae3 跟 bg(#f4f3ef) / panel(#fff) 太接近，.phead 區帶讀不出來 → 壓深一階 */
+  --color-raise: #e7e0d3;
+  --color-hair: rgba(24, 26, 30, 0.1);
+  --color-edge: rgba(24, 26, 30, 0.22);
+  --color-ink: #1a1c20;
+  --color-ink2: #474d57;
+  /* ink3：小字說明大量用它，#61666f 在白底 ~5.4:1，過 WCAG AA 內文 */
+  --color-ink3: #61666f;
+  /* hot / gold 在白底當「小字」用（OverviewCaption 延遲警示、StationDetail 對答案），
+     原 #c6461f≈4.26:1、#9a7300≈4.35:1 皆未達 AA 4.5 → 各再壓深一階。 */
+  --color-hot: #bd4019;
+  --color-cold: #2861cf;
+  --color-calm: #8b9099;
+  --color-gold: #8a6600;
+  --color-hot-wash: rgba(198, 70, 31, 0.1);
+  --color-cold-wash: rgba(40, 97, 207, 0.1);
+  --color-focus: #1f5fe0;
+}
+
+/* 文字大小快捷（無障礙）：只調 root font-size —— rem 型的字級「和」
+   Tailwind v4 的 rem 型間距 / 尺寸會一起等比縮放，版面維持比例。
+   100% = 尊重瀏覽器 / 系統的字級設定（本身也是一種無障礙來源）。 */
 html {
   -webkit-text-size-adjust: 100%;
-  color-scheme: dark;
+  font-size: 100%;
+}
+/* 級距刻意不對稱：放大是無障礙方向 → 大步（+25%，在 Android「Largest」1.3 的範圍內）；
+   縮小只是密度偏好 → 小步（−10%）。跨度 0.90–1.25。
+   ⚠ 這裡的數值要跟 useAppStore 的 FONT_PCT 對齊。 */
+:root[data-font='sm'] {
+  font-size: 90%;
+}
+:root[data-font='lg'] {
+  font-size: 125%;
 }
 
 body {
@@ -41,7 +90,7 @@ body {
   background: var(--color-bg);
   color: var(--color-ink);
   font-family: var(--font-sans);
-  font-size: 14.5px;
+  font-size: 0.906rem; /* ≈14.5px @100%，改用 rem 讓它跟著縮放 */
   line-height: 1.68;
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
@@ -51,33 +100,130 @@ svg {
   display: block;
 }
 
-/* 共用小工具 class（沿用原型命名，方便對照） */
-.kicker {
-  font-size: 0.62rem;
-  letter-spacing: 0.26em;
-  text-transform: uppercase;
-  color: var(--color-ink3);
-  font-weight: 600;
+/* 鍵盤焦點框（WCAG 2.4.7 Focus Visible）。:where() → specificity 0，元件仍可個別覆寫；
+   :focus-visible → 滑鼠點擊不冒框，只有鍵盤導覽時出現。
+   註：帶 outline-none utility 的元件（如 Combobox input）specificity 較高，需各別補 focus 樣式。 */
+:where(a, button, input, select, textarea, summary, [role='button'], [tabindex]:not([tabindex='-1'])):focus-visible {
+  outline: 2px solid var(--color-focus);
+  outline-offset: 2px;
 }
 
-.num {
-  font-family: var(--font-serif);
-  font-variant-numeric: tabular-nums;
-  letter-spacing: -0.025em;
+/* KPI 換批的細微 live-update 提示：數字底色閃一下、delta 徽章淡入上浮。刻意短、無彈跳。
+   由 React 端 key 控制觸發（值變才重掛）。prefers-reduced-motion 直接不套。 */
+@keyframes kpi-flash {
+  from {
+    background-color: color-mix(in srgb, var(--color-ink) 10%, transparent);
+  }
+  to {
+    background-color: transparent;
+  }
+}
+@keyframes kpi-rise {
+  from {
+    opacity: 0;
+    transform: translateY(3px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+@media (prefers-reduced-motion: no-preference) {
+  .kpi-flash {
+    animation: kpi-flash 0.6s ease-out;
+  }
+  .kpi-rise {
+    animation: kpi-rise 0.24s ease-out;
+  }
 }
 
-.panel {
-  border: 1px solid var(--color-edge);
-  background: var(--color-panel);
+/* 細微進場動效（都 ≤ 0.2s ease-out、無彈跳）。由 React key 控制何時重掛：
+   換站 / 換批 / 狀態切換時對應元素重掛 → 動畫重播一次。reduced-motion 全不套。 */
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+}
+@keyframes dialog-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px) scale(0.98);
+  }
+}
+@keyframes soft-in {
+  from {
+    opacity: 0.35;
+  }
+}
+@keyframes slide-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+}
+@keyframes row-in {
+  from {
+    opacity: 0;
+    transform: translateY(3px);
+  }
+}
+/* 背景刷新指示（Tailwind animate-spin）在減少動態時停轉 */
+@media (prefers-reduced-motion: reduce) {
+  .spin-ind {
+    animation: none;
+  }
+}
+@media (prefers-reduced-motion: no-preference) {
+  .anim-fade {
+    animation: fade-in 0.12s ease-out;
+  }
+  .anim-dialog {
+    animation: dialog-in 0.16s ease-out;
+  }
+  .anim-soft {
+    animation: soft-in 0.2s ease-out;
+  }
+  .anim-slide {
+    animation: slide-in 0.18s ease-out;
+  }
+  .anim-row {
+    animation: row-in 0.18s ease-out;
+  }
 }
 
-.phead {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 11px 16px;
-  border-bottom: 1px solid var(--color-hair);
-  background: var(--color-raise);
+/* 共用小工具 class（沿用原型命名，方便對照）。
+   ★ 必須包 @layer components：否則無層級規則會贏過所有 Tailwind utility，
+   `cn('kicker', 'text-white/80')` 這種「預設色 + 就地覆寫」會失效
+   （高風險卡的 kicker 一直被 .kicker 的 ink3 蓋掉，白字上不去）。 */
+@layer components {
+  .kicker {
+    /* 0.62rem 在「中」檔只有 ~9.9px、「小」檔 ~9px，中文偏吃力 → 抬到 0.7rem 當地板 */
+    font-size: 0.7rem;
+    letter-spacing: 0.26em;
+    text-transform: uppercase;
+    color: var(--color-ink3);
+    font-weight: 600;
+  }
+
+  .num {
+    font-family: var(--font-serif);
+    font-variant-numeric: tabular-nums;
+    letter-spacing: -0.025em;
+  }
+
+  .panel {
+    border: 1px solid var(--color-edge);
+    background: var(--color-panel);
+  }
+
+  .phead {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 11px 16px;
+    border-bottom: 1px solid var(--color-hair);
+    background: var(--color-raise);
+  }
 }
 
 /* MapLibre：套自家極簡風。maplibre 預設 popup 是白底，要壓成深色。 */
@@ -91,8 +237,13 @@ svg {
 .maplibregl-ctrl-group button + button {
   border-top: 1px solid var(--color-hair);
 }
-.maplibregl-ctrl-group button .maplibregl-ctrl-icon {
+/* maplibre 的 +/− 與 attribution「i」是深色 glyph，深色主題才反白；
+   淺色主題留原樣（深 glyph 在白色 ctrl 背景上本來就看得到）。 */
+[data-theme='dark'] .maplibregl-ctrl-group button .maplibregl-ctrl-icon {
   filter: invert(1) opacity(0.7);
+}
+[data-theme='light'] .maplibregl-ctrl-group button .maplibregl-ctrl-icon {
+  filter: opacity(0.62);
 }
 /* 預設 compact attribution 是白底黑字（specificity 0,2,0）；用對等選擇器蓋成深色主題 */
 .maplibregl-ctrl-attrib,
@@ -108,8 +259,11 @@ svg {
   color: var(--color-ink);
   text-decoration: none;
 }
-.maplibregl-ctrl-attrib-button {
+[data-theme='dark'] .maplibregl-ctrl-attrib-button {
   filter: invert(1) opacity(0.8);
+}
+[data-theme='light'] .maplibregl-ctrl-attrib-button {
+  filter: opacity(0.65);
 }
 
 .maplibregl-popup {

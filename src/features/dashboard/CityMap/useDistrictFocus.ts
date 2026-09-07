@@ -39,13 +39,13 @@ export function useDistrictFocus(
 
     if (townName) {
       const b = districtBounds(townName)
-      if (b) map.fitBounds(b, { padding: 48, duration: 700 })
+      if (b) map.fitBounds(b, { padding: 48, duration: 700, bearing: 0, pitch: 0 })
       return
     }
     // 全部行政區：框站點分布
     const b = new LngLatBounds()
     for (const s of stations ?? []) if (hasCoord(s)) b.extend([s.lon, s.lat])
-    if (!b.isEmpty()) map.fitBounds(b, { padding: 40, duration: 700 })
+    if (!b.isEmpty()) map.fitBounds(b, { padding: 40, duration: 700, bearing: 0, pitch: 0 })
   }, [mapRef, ready, townName, frameNonce])
 
   // 站點第一次到齊時（load 當下站表通常還沒回來），若停在「全部」補一次對焦
@@ -55,6 +55,6 @@ export function useDistrictFocus(
     didInitial.current = true
     const b = new LngLatBounds()
     for (const s of stations!) if (hasCoord(s)) b.extend([s.lon, s.lat])
-    if (!b.isEmpty()) map.fitBounds(b, { padding: 40, duration: 700 })
+    if (!b.isEmpty()) map.fitBounds(b, { padding: 40, duration: 700, bearing: 0, pitch: 0 })
   }, [mapRef, ready, townName, stations])
 }

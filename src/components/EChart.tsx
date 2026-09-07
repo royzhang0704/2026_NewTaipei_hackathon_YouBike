@@ -1,9 +1,11 @@
 import { useEffect, useRef } from 'react'
 import * as echarts from 'echarts/core'
 import type { EChartsOption } from 'echarts'
+import { registerCharts } from '@/lib/echarts'
 
 /** echarts/core 的薄 wrapper：mount 時 init，option 變更時 setOption，容器縮放時 resize。
-    模組（LineChart / GridComponent / SVGRenderer…）在 lib/echarts.ts 統一註冊。 */
+    模組由 registerCharts()（idempotent）在此註冊 —— 整個 echarts 只在這個 chunk 裡，
+    StationDetail lazy-load ForecastChart 時才下載，不進主包。 */
 export function EChart({
   option,
   className,
@@ -18,6 +20,7 @@ export function EChart({
 
   useEffect(() => {
     if (!elRef.current) return
+    registerCharts()
     const chart = echarts.init(elRef.current, undefined, { renderer: 'svg' })
     chartRef.current = chart
     const ro = new ResizeObserver(() => chart.resize())

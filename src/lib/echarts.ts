@@ -14,6 +14,8 @@ import { SVGRenderer } from 'echarts/renderers'
 let done = false
 export function registerCharts() {
   if (done) return
+  // 這裡的 use 是 echarts/core 的模組註冊，不是 React 的 use hook —— lint 誤判
+  // oxlint-disable-next-line react-hooks/rules-of-hooks
   use([
     LineChart,
     CustomChart,

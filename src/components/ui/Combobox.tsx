@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useMemo, useState, type ReactNode } from 'react'
 import * as Popover from '@radix-ui/react-popover'
 import { Command } from 'cmdk'
 import { Check, ChevronsUpDown, Search } from 'lucide-react'
@@ -22,6 +22,16 @@ interface Props {
   placeholder?: string
   searchPlaceholder?: string
   disabled?: boolean
+  /** trigger 左側圖示。傳入即切成「搜尋框」外觀（左圖示、右側不放 ⇕），
+      跟純選單型（其他行政區）在視覺上分開，讓「打字查找」的意圖一眼可辨。 */
+  leadingIcon?: ReactNode
+  /** trigger 右側提示（例：`/` 快捷鍵 kbd），開啟時自動隱藏 */
+  trailingHint?: ReactNode
+  /** 受控開關（不傳＝元件自管）——外部要用快捷鍵開啟時傳入 */
+  open?: boolean
+  onOpenChange?: (o: boolean) => void
+  /** 覆蓋 trigger 樣式（tailwind-merge，後者勝）——例：縮成 chip 尺寸放進工具列 */
+  triggerClassName?: string
 }
 
 /** Radix Popover + cmdk 的 Combobox（shadcn 慣用組合）。
@@ -33,8 +43,15 @@ export function Combobox({
   placeholder = '— 請選擇 —',
   searchPlaceholder = '搜尋…',
   disabled,
+  leadingIcon,
+  trailingHint,
+  open: openProp,
+  onOpenChange,
+  triggerClassName,
 }: Props) {
-  const [open, setOpen] = useState(false)
+  const [openState, setOpenState] = useState(false)
+  const open = openProp ?? openState
+  const setOpen = (o: boolean) => (onOpenChange ? onOpenChange(o) : setOpenState(o))
 
   const selectedLabel = useMemo(
     () => items.find((i) => i.value === value)?.label ?? '',
@@ -57,12 +74,21 @@ export function Combobox({
     <Popover.Root open={open} onOpenChange={setOpen}>
       <Popover.Trigger
         disabled={disabled}
-        className="flex w-full min-w-[210px] max-w-[330px] items-center justify-between gap-[10px] rounded-xs border border-edge bg-panel px-[10px] py-2 text-left text-[0.86rem] text-ink hover:bg-raise disabled:cursor-default disabled:opacity-40 data-[state=open]:border-ink2"
+        className={cn(
+          'flex w-full min-w-[210px] max-w-[330px] items-center gap-[10px] rounded-xs border border-edge bg-panel px-[10px] py-2 text-left text-[0.86rem] text-ink hover:bg-raise disabled:cursor-default disabled:opacity-40 data-[state=open]:border-ink2',
+          triggerClassName,
+        )}
       >
-        <span className={cn('truncate', !selectedLabel && 'text-ink3')}>
+        {leadingIcon && (
+          <span className="flex size-[13px] flex-none items-center justify-center text-ink3" aria-hidden>
+            {leadingIcon}
+          </span>
+        )}
+        <span className={cn('min-w-0 flex-1 truncate', !selectedLabel && 'text-ink3')}>
           {selectedLabel || placeholder}
         </span>
-        <ChevronsUpDown className="size-3 flex-none opacity-45" />
+        {trailingHint && !open && <span className="flex-none">{trailingHint}</span>}
+        {!leadingIcon && <ChevronsUpDown className="size-3 flex-none opacity-45" />}
       </Popover.Trigger>
 
       <Popover.Portal>
@@ -72,7 +98,9 @@ export function Combobox({
           className="z-40 w-[min(340px,86vw)] overflow-hidden rounded-xs border border-edge bg-panel shadow-[0_10px_30px_rgba(0,0,0,.5)]"
         >
           <Command>
-            <div className="flex items-center gap-2 border-b border-hair px-[10px] py-2">
+            {/* input 帶 outline-none（全域 :focus-visible 蓋不過）→ 焦點改用整列底線呈現，
+                跟 trigger 的 data-[state=open]:border-ink2 一致 */}
+            <div className="flex items-center gap-2 border-b border-hair px-[10px] py-2 focus-within:border-ink2">
               <Search className="size-[13px] flex-none opacity-40" />
               <Command.Input
                 placeholder={searchPlaceholder}
@@ -87,7 +115,7 @@ export function Combobox({
                 <Command.Group
                   key={grp.group}
                   heading={grp.group || undefined}
-                  className="[&_[cmdk-group-heading]]:sticky [&_[cmdk-group-heading]]:top-0 [&_[cmdk-group-heading]]:bg-panel [&_[cmdk-group-heading]]:px-2 [&_[cmdk-group-heading]]:pb-[3px] [&_[cmdk-group-heading]]:pt-[7px] [&_[cmdk-group-heading]]:text-[0.6rem] [&_[cmdk-group-heading]]:font-semibold [&_[cmdk-group-heading]]:tracking-[0.18em] [&_[cmdk-group-heading]]:text-ink3"
+                  className="[&_[cmdk-group-heading]]:sticky [&_[cmdk-group-heading]]:top-0 [&_[cmdk-group-heading]]:bg-panel [&_[cmdk-group-heading]]:px-2 [&_[cmdk-group-heading]]:pb-[3px] [&_[cmdk-group-heading]]:pt-[7px] [&_[cmdk-group-heading]]:text-[0.68rem] [&_[cmdk-group-heading]]:font-semibold [&_[cmdk-group-heading]]:tracking-[0.14em] [&_[cmdk-group-heading]]:text-ink3"
                 >
                   {grp.items.map((it) => (
                     <Command.Item
@@ -105,7 +133,7 @@ export function Combobox({
                       </span>
                       <span className="truncate">{it.label}</span>
                       {it.suffix && (
-                        <span className="ml-auto flex-none text-[0.62rem] tracking-[0.1em] text-ink3">
+                        <span className="ml-auto flex-none text-[0.68rem] tracking-[0.06em] text-ink3">
                           {it.suffix}
                         </span>
                       )}

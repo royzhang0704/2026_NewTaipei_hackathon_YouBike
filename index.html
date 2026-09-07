@@ -10,7 +10,19 @@
       href="https://fonts.googleapis.com/css2?family=Noto+Serif+TC:wght@400;500;600&family=Noto+Sans+TC:wght@400;500;600&display=swap"
       rel="stylesheet"
     />
-    <title>調度中心 — YouBike 營運調度預測</title>
+    <title>新北市 YouBike 調度中心</title>
+    <script>
+      // first paint 前定調 主題 + 文字大小，避免閃動。
+      try {
+        var d = document.documentElement
+        var t = localStorage.getItem('yb_theme')
+        if (t !== 'light' && t !== 'dark')
+          t = matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark'
+        d.dataset.theme = t
+        var f = localStorage.getItem('yb_font')
+        if (f === 'sm' || f === 'lg') d.dataset.font = f
+      } catch (e) {}
+    </script>
   </head>
   <body>
     <div id="root"></div>

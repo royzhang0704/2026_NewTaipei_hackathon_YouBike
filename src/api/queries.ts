@@ -11,7 +11,7 @@ import type { AlertsResponse, Health, Station, StationDay, Town } from './types'
 export function useHealth() {
   return useQuery({
     queryKey: qk.health,
-    queryFn: () => api<Health>('/healthz'),
+    queryFn: ({ signal }) => api<Health>('/healthz', { signal }),
     // 短間隔：頭欄時鐘靠連續兩次 now 推算流速，後端調速度最多 8 秒就跟上
     refetchInterval: 8_000,
     staleTime: 6_000,
@@ -21,7 +21,7 @@ export function useHealth() {
 export function useTowns() {
   return useQuery({
     queryKey: qk.towns,
-    queryFn: () => api<Town[]>('/api/v1/towns'),
+    queryFn: ({ signal }) => api<Town[]>('/api/v1/towns', { signal }),
     staleTime: 60 * 60_000,
   })
 }
@@ -29,7 +29,7 @@ export function useTowns() {
 export function useStations() {
   return useQuery({
     queryKey: qk.stations,
-    queryFn: () => api<Station[]>('/api/v1/stations'),
+    queryFn: ({ signal }) => api<Station[]>('/api/v1/stations', { signal }),
     staleTime: 60 * 60_000,
   })
 }
@@ -37,7 +37,8 @@ export function useStations() {
 export function useStationDay(uid: string | null | undefined) {
   return useQuery({
     queryKey: qk.stationDay(uid),
-    queryFn: () => api<StationDay>(`/api/v1/stations/${encodeURIComponent(uid!)}/day`),
+    queryFn: ({ signal }) =>
+      api<StationDay>(`/api/v1/stations/${encodeURIComponent(uid!)}/day`, { signal }),
     enabled: !!uid,
     // demo 回放時鐘會往前跑，資料要跟著更新
     refetchInterval: 25_000, // 主要靠 useSlotSync 在虛擬時鐘跨格時 invalidate；這是備援
@@ -57,7 +58,7 @@ export interface AlertsParams {
 export function useAlerts(params: AlertsParams) {
   return useQuery({
     queryKey: qk.alerts(params),
-    queryFn: () => {
+    queryFn: ({ signal }) => {
       const qs = new URLSearchParams()
       if (params.town_code) qs.set('town_code', params.town_code)
       if (params.level) qs.set('level', params.level)
@@ -65,7 +66,7 @@ export function useAlerts(params: AlertsParams) {
       if (params.action) qs.set('action', params.action)
       qs.set('limit', String(params.limit ?? 100))
       qs.set('offset', String(params.offset ?? 0))
-      return api<AlertsResponse>(`/api/v1/alerts?${qs}`)
+      return api<AlertsResponse>(`/api/v1/alerts?${qs}`, { signal })
     },
     placeholderData: keepPreviousData,
     refetchInterval: 25_000, // 主要靠 useSlotSync 在虛擬時鐘跨格時 invalidate；這是備援

@@ -7,13 +7,13 @@ import outlineGeo from '@/assets/newtaipei-outline.json'
    - 全部行政區：焦點＝整個新北市（甜甜圈狀，中間的台北市也要暗）
    不需要 turf —— GeoJSON 帶洞多邊形就是 [外環, 內環...]。 */
 
-// 逆時針大矩形（涵蓋全台灣與周邊海域）
+// 超大矩形，遠大於任何可能的視野（minZoom 8 也蓋得住），縮到最遠也看不到邊
 const WORLD_RING: number[][] = [
-  [117, 20],
-  [124, 20],
-  [124, 27],
-  [117, 27],
-  [117, 20],
+  [90, 0],
+  [160, 0],
+  [160, 45],
+  [90, 45],
+  [90, 0],
 ]
 
 export const EMPTY_FC: FeatureCollection = { type: 'FeatureCollection', features: [] }

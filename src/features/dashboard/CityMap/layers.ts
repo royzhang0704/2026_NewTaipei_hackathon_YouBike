@@ -1,6 +1,7 @@
 import type { LayerProps } from 'react-map-gl/maplibre'
 import type { StyleSpecification } from 'maplibre-gl'
 import type { FilterSpecification } from 'maplibre-gl'
+import type { Theme } from '@/stores/useAppStore'
 
 /* 圖層樣式集中在這一檔。加派工路線層時，就在這裡多一組 + 在 CityMap 掛一個 <Layer>。 */
 
@@ -19,41 +20,59 @@ const TILE_SOURCES: Record<string, string[]> = {
   ],
 }
 
+export const HAS_BASEMAP = BASEMAP !== 'none'
+
+/* 底圖與光柵層改用 <Layer> 掛，paint 隨主題切換（見 bgLayer / rasterLayer）。
+   style 本體只留 source，layers 空著。 */
 export const MAP_STYLE: StyleSpecification = {
   version: 8,
-  sources:
-    BASEMAP === 'none'
-      ? {}
-      : {
-          base: {
-            type: 'raster',
-            tiles: TILE_SOURCES[BASEMAP] ?? TILE_SOURCES.nlsc,
-            tileSize: 256,
-            // NLSC 低 zoom（全球視野）沒有圖磚，會噴一堆「could not be decoded」
-            minzoom: BASEMAP === 'nlsc' ? 7 : 0,
-            maxzoom: 20,
-            attribution: BASEMAP === 'nlsc' ? '© 內政部國土測繪中心' : '© OpenStreetMap',
-          },
+  sources: HAS_BASEMAP
+    ? {
+        base: {
+          type: 'raster',
+          tiles: TILE_SOURCES[BASEMAP] ?? TILE_SOURCES.nlsc,
+          tileSize: 256,
+          // NLSC 低 zoom（全球視野）沒有圖磚，會噴一堆「could not be decoded」
+          minzoom: BASEMAP === 'nlsc' ? 7 : 0,
+          maxzoom: 20,
+          attribution: BASEMAP === 'nlsc' ? '© 內政部國土測繪中心' : '© OpenStreetMap',
         },
-  layers: [
-    { id: 'bg', type: 'background', paint: { 'background-color': '#0e1116' } },
-    ...(BASEMAP === 'none'
-      ? []
-      : [
-          {
-            id: 'base',
-            type: 'raster' as const,
-            source: 'base',
-            paint: {
-              'raster-opacity': 0.42,
-              'raster-saturation': -1,
-              'raster-brightness-max': 0.68,
-              'raster-contrast': -0.1,
-            },
-          },
-        ]),
-  ],
+      }
+    : {},
+  layers: [],
 }
+
+/** 最底層純色背景（NLSC 圖磚半透明時透出來、被壓淡後的底色）。 */
+export const bgLayer = (theme: Theme): LayerProps => ({
+  id: 'bg',
+  type: 'background',
+  paint: { 'background-color': theme === 'light' ? '#edece6' : '#0e1116' },
+})
+
+/* NLSC 光柵。資料地圖的底圖要當「安靜的薄墊」，不能跟資料點搶：
+   深色：壓暗、去飽和、塞進深底。
+   淺色：去飽和殺掉山區綠暈；但 opacity / contrast 不能壓太狠——原本 0.5 / -0.34
+   把路網、地名、行政區輪廓都洗到幾乎看不見，失去「這團站點在哪一區」的參考。
+   現值：opacity 0.6、對比只微降、最亮處壓到 0.96（不留純白，讓細線有底可站）。 */
+export const rasterLayer = (theme: Theme): LayerProps => ({
+  id: 'base',
+  type: 'raster',
+  source: 'base',
+  paint:
+    theme === 'light'
+      ? {
+          'raster-opacity': 0.6,
+          'raster-saturation': -0.9,
+          'raster-brightness-max': 0.96,
+          'raster-contrast': -0.16,
+        }
+      : {
+          'raster-opacity': 0.42,
+          'raster-saturation': -1,
+          'raster-brightness-max': 0.68,
+          'raster-contrast': -0.1,
+        },
+})
 
 const COLOR_BY_SIDE = [
   'match',
@@ -139,24 +158,25 @@ export const STATION_LAYERS = {
   }),
   // 健康站＝空心白圈。半徑與線粗依比例尺縮放：城市視野細（密集區才不糊成一片），
   // 放大到單區正常粗細。
-  base: (town: string, sel: string | null): LayerProps => ({
+  base: (town: string, sel: string | null, theme: Theme): LayerProps => ({
     id: 'st-base',
     type: 'circle',
     source: 'stations',
     filter: scopeFilter(F_BASE, town),
     paint: {
       'circle-radius': ['interpolate', ['linear'], ['zoom'], 9, 1.8, 11, 2.4, 13, 4, 15, 6],
-      'circle-color': 'rgba(233,235,238,0.14)',
+      // 淺色：近白實心填 + 深細環 → 在忙碌底圖上也是清楚的「甜甜圈」；深色：原本的透明填
+      'circle-color': theme === 'light' ? 'rgba(255,255,255,0.92)' : 'rgba(233,235,238,0.14)',
       'circle-opacity': dimExpr(sel, 1, 0.4),
       'circle-opacity-transition': { duration: 160 },
       'circle-stroke-width': ['interpolate', ['linear'], ['zoom'], 9, 0.6, 11, 0.9, 13, 1.4, 15, 1.6],
-      'circle-stroke-color': '#e9ebee',
+      'circle-stroke-color': theme === 'light' ? '#33383f' : '#e9ebee',
       'circle-stroke-opacity': dimExpr(sel, 0.85, 0.4),
       'circle-stroke-opacity-transition': { duration: 160 },
     } as never,
   }),
   // 形狀編碼：缺車＝實心圓、滿站＝空心圈（藍粗框）。灰階下也分得出（實心 vs 空心）。
-  alert: (town: string, sel: string | null): LayerProps => ({
+  alert: (town: string, sel: string | null, theme: Theme): LayerProps => ({
     id: 'st-alert',
     type: 'circle',
     source: 'stations',
@@ -176,12 +196,18 @@ export const STATION_LAYERS = {
       'circle-opacity': sideDim(sel, 0.12, 0.9),
       'circle-opacity-transition': { duration: 160 },
       'circle-stroke-width': ['case', ['==', ['get', 'side'], 'full'], 2.4, 1],
-      'circle-stroke-color': ['case', ['==', ['get', 'side'], 'full'], '#5591F2', 'rgba(11,13,16,0.7)'],
+      // 缺車實心點的分隔暈：深色底用深暈、淺色底用白暈
+      'circle-stroke-color': [
+        'case',
+        ['==', ['get', 'side'], 'full'],
+        '#5591F2',
+        theme === 'light' ? 'rgba(255,255,255,0.9)' : 'rgba(11,13,16,0.7)',
+      ],
       'circle-stroke-opacity': dimFactor(sel),
       'circle-stroke-opacity-transition': { duration: 160 },
     } as never,
   }),
-  selected: (uid: string | null): LayerProps => ({
+  selected: (uid: string | null, theme: Theme): LayerProps => ({
     id: 'st-selected',
     type: 'circle',
     source: 'stations',
@@ -190,7 +216,7 @@ export const STATION_LAYERS = {
       'circle-radius': 14,
       'circle-color': 'rgba(0,0,0,0)',
       'circle-stroke-width': 2,
-      'circle-stroke-color': '#ffffff',
+      'circle-stroke-color': theme === 'light' ? '#1a1c20' : '#ffffff',
     },
   }),
 }
@@ -211,11 +237,15 @@ export const DISTRICT_LAYERS = {
     filter: ['==', ['get', 'town'], town || '__none__'] as FilterSpecification,
     paint: { 'fill-color': '#EE5A34', 'fill-opacity': 0.06 },
   }),
-  line: (): LayerProps => ({
+  line: (theme: Theme): LayerProps => ({
     id: 'district-line',
     type: 'line',
     source: 'districts',
-    paint: { 'line-color': 'rgba(255,255,255,0.13)', 'line-width': 0.6 },
+    paint: {
+      // 行政區界＝這張圖的主要「定位」層，兩個主題原本都太細（淺 0.16/0.6、深 0.13/0.6）→ 一起加深加粗
+      'line-color': theme === 'light' ? 'rgba(24,26,30,0.3)' : 'rgba(255,255,255,0.2)',
+      'line-width': theme === 'light' ? 0.8 : 0.7,
+    },
   }),
   lineSel: (town: string): LayerProps => ({
     id: 'district-line-sel',

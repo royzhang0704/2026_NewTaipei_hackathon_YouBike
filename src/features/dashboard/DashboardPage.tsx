@@ -1,26 +1,23 @@
-import { useEffect, useMemo, useRef } from 'react'
+import { useEffect, useRef } from 'react'
 import { useEventListener } from 'usehooks-ts'
 import { X } from 'lucide-react'
 import { useAppStore } from '@/stores/useAppStore'
-import { useStationDay, useTowns } from '@/api/queries'
+import { useStationDay } from '@/api/queries'
+import { useUrlSync } from '@/hooks/useUrlSync'
 import { cn } from '@/lib/utils'
 import { KpiStrip } from './KpiStrip'
+import { OverviewCaption } from './OverviewCaption'
 import { AlertList } from './AlertList'
 import { CityMap } from './CityMap/CityMap'
+import { DistrictPicker } from './DistrictPicker'
 import { StationDetail } from '@/features/station/StationDetail'
 import { StationSearch } from '@/features/station/StationSearch'
 
 export default function DashboardPage() {
-  const townCode = useAppStore((s) => s.townCode)
   const selectedUid = useAppStore((s) => s.selectedUid)
-  const selectTown = useAppStore((s) => s.selectTown)
   const selectStation = useAppStore((s) => s.selectStation)
 
-  const { data: towns } = useTowns()
-  const chips = useMemo(
-    () => [{ code: '', label: '全部行政區' }, ...(towns ?? []).map((t) => ({ code: t.town_code, label: t.town }))],
-    [towns],
-  )
+  useUrlSync() // ?town=&station= ↔ store：重新整理 / 分享連結保留視野
 
   const { data: day, isPending: dayPending, error: dayError } = useStationDay(selectedUid)
 
@@ -38,46 +35,30 @@ export default function DashboardPage() {
   }, [selectedUid])
 
   return (
-    <div className="mx-auto max-w-[1780px] px-4 pb-16 md:px-6">
-      <div className="flex items-baseline gap-4 py-4">
-        <h2 className="m-0 text-[0.82rem] font-semibold tracking-[0.13em]">即時概況</h2>
-        <p className="ml-auto hidden max-w-[42ch] text-right text-[0.8rem] leading-[1.6] text-ink3 md:block">
-          數字取自最新一輪批次預測（每 30 分）。只讀資料庫，查詢不觸發推論。
-        </p>
+    // xl：撐滿 AppShell 的 <main>（flex-1 of h-dvh），成直欄；地圖區用 flex-1 吃剩餘高度。<xl 流式捲動
+    // 2xl（壁掛 / 大監視器）放寬上限，多塞地圖和警示列、不浪費兩側留白
+    <div className="mx-auto max-w-[1780px] px-4 pb-8 md:px-6 xl:flex xl:h-full xl:min-h-0 xl:flex-col 2xl:max-w-[2160px]">
+      <div className="flex items-baseline gap-3 py-4">
+        <h2
+          aria-describedby="overview-caption"
+          className="m-0 text-[0.82rem] font-semibold tracking-[0.13em]"
+        >
+          供需概況
+        </h2>
+        <OverviewCaption />
       </div>
 
       <KpiStrip />
 
-      {/* 桌機：地圖 + 右 rail 鎖進視窗高度，這一區不整頁捲；<xl 回到流式捲動 */}
-      <div className="mt-4 grid grid-cols-1 border border-edge bg-panel xl:h-[calc(100dvh-236px)] xl:min-h-[520px] xl:grid-cols-[1fr_396px] xl:overflow-hidden">
+      {/* 桌機：地圖 + 右 rail 吃 flex 剩餘高度（不再 calc 魔術數字），這一區不整頁捲；<xl 流式捲動 */}
+      <div className="mt-4 grid grid-cols-1 border border-edge bg-panel xl:min-h-0 xl:flex-1 xl:grid-cols-[1fr_396px] xl:overflow-hidden">
         {/* 地圖欄 */}
         <div className="flex min-w-0 flex-col">
-          <div className="phead flex-none gap-3">
-            <h3 className="m-0 shrink-0 text-[0.82rem] font-semibold tracking-[0.13em]">空滿熱度圖</h3>
-            <div className="ml-auto">
-              <StationSearch />
-            </div>
+          <div className="phead flex-none">
+            <h3 className="m-0 text-[0.82rem] font-semibold tracking-[0.13em]">空滿熱度圖</h3>
           </div>
 
-          <div className="flex flex-none items-center gap-3 border-b border-hair px-4 py-[9px]">
-            <span className="kicker flex-none">地區</span>
-            <div className="flex gap-[6px] overflow-x-auto [scrollbar-width:none]">
-              {chips.map((c) => (
-                <button
-                  key={c.code}
-                  onClick={() => selectTown(c.code)}
-                  className={cn(
-                    'flex-none whitespace-nowrap rounded-xs border px-[10px] py-[5px] text-[0.76rem] tracking-[0.04em]',
-                    townCode === c.code
-                      ? 'border-ink bg-ink font-semibold text-bg'
-                      : 'border-hair text-ink2 hover:border-edge hover:text-ink',
-                  )}
-                >
-                  {c.label}
-                </button>
-              ))}
-            </div>
-          </div>
+          <DistrictPicker trailing={<StationSearch />} />
 
           <div className="h-[clamp(460px,60vh,760px)] xl:h-auto xl:min-h-0 xl:flex-1">
             <CityMap />
@@ -105,13 +86,13 @@ export default function DashboardPage() {
             {selectedUid ? (
               <button
                 onClick={() => selectStation(null)}
-                className="ml-auto flex items-center gap-1 rounded-xs border border-hair px-2 py-[3px] text-[0.66rem] tracking-[0.1em] text-ink3 hover:border-edge hover:text-ink"
+                className="ml-auto flex items-center gap-1 rounded-xs border border-hair px-2 py-[3px] text-[0.7rem] tracking-[0.08em] text-ink3 hover:border-edge hover:text-ink"
               >
                 <X className="size-3" />
                 清除
               </button>
             ) : (
-              <span className="ml-auto text-[0.66rem] tracking-[0.14em] text-ink3">含未來三小時預測</span>
+              <span className="ml-auto text-[0.7rem] tracking-[0.1em] text-ink3">含未來三小時預測</span>
             )}
           </div>
 
@@ -125,7 +106,7 @@ export default function DashboardPage() {
             ) : dayPending ? (
               <div className="p-4 text-[0.82rem] text-ink3">查詢中…</div>
             ) : day ? (
-              <StationDetail day={day} />
+              <StationDetail key={day.station.uid} day={day} />
             ) : null}
           </div>
         </div>

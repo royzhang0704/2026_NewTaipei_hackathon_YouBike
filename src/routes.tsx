@@ -3,7 +3,6 @@ import type { RouteObject } from 'react-router-dom'
 import { AppShell } from './app/AppShell'
 
 const DashboardPage = lazy(() => import('./features/dashboard/DashboardPage'))
-const StationPage = lazy(() => import('./features/station/StationPage'))
 
 export const routes: RouteObject[] = [
   {
@@ -11,7 +10,6 @@ export const routes: RouteObject[] = [
     element: <AppShell />,
     children: [
       { index: true, element: <DashboardPage /> },
-      { path: 'station/:uid?', element: <StationPage /> },
       { path: '*', element: <DashboardPage /> },
     ],
   },
