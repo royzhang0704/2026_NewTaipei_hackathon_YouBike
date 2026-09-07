@@ -10,6 +10,7 @@ import { useSlotSync } from '@/hooks/useSlotSync'
 import { useAppStore, type FontScale } from '@/stores/useAppStore'
 import { ShortcutsHelp } from '@/components/ShortcutsHelp'
 import { ErrorBoundary } from '@/components/ErrorBoundary'
+import { AssistantWidget } from '@/features/assistant/AssistantWidget'
 import { cn } from '@/lib/utils'
 
 const FONT_STEPS: { key: FontScale; label: string }[] = [
@@ -154,6 +155,7 @@ export function AppShell() {
       </footer>
 
       <ShortcutsHelp />
+      <AssistantWidget />
 
       <style>{`
         @keyframes beat { 50% { opacity: 0.25 } }
