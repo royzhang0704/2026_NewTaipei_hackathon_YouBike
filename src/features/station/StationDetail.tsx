@@ -11,35 +11,15 @@ const ForecastChart = lazy(() =>
   import('./ForecastChart').then((m) => ({ default: m.ForecastChart })),
 )
 
-export function StationDetail({ day }: { day: StationDay }) {
-  const { station: st, now, risk: k } = day
-  // day.station 只有精簡欄位；地址 / 座標從已快取的 useStations() 用 uid 撈
+/** 站名 + 行政區／車柱數／基準時刻 + 地址列。正常與「查無資料」兩種畫面共用。 */
+function StationHead({ st, origin }: { st: StationDay['station']; origin: string | null }) {
+  // st 只有精簡欄位；地址 / 座標從已快取的 useStations() 用 uid 撈
   const stations = useStations().data
-  const full = useMemo(
-    () => stations?.find((s) => s.uid === st.uid),
-    [stations, st.uid],
-  )
+  const full = useMemo(() => stations?.find((s) => s.uid === st.uid), [stations, st.uid])
   const hasCoord = full != null && Number.isFinite(full.lat) && Number.isFinite(full.lon)
   const cap = st.capacity
-  const avail = now.avail
-  const free = now.free
-  const t = k?.threshold ?? null
 
-  const pct = avail == null || !cap ? 0 : Math.min(100, Math.round((100 * avail) / cap))
-  const gaugeColor =
-    avail == null || !cap || t == null
-      ? 'var(--color-calm)'
-      : avail <= t
-        ? 'var(--color-hot)'
-        : cap - avail <= t
-          ? 'var(--color-cold)'
-          : 'var(--color-calm)'
-
-  const ab = useMemo(() => (k ? actionBlock(k) : null), [k])
-
-  const fcLast = day.forecast.length ? day.forecast[day.forecast.length - 1] : null
-
-  // 選站後把焦點帶到單站檢視標題（元件已按 uid 重掛 → 每次換站都移）。
+  // 選站後把焦點帶到標題（元件按 uid 重掛 → 每次換站都移）。
   // 報讀者會唸出「站名, 標題」；滑鼠使用者看不到框（tabIndex -1 + outline-none）。
   const headingRef = useRef<HTMLHeadingElement>(null)
   useEffect(() => {
@@ -48,7 +28,7 @@ export function StationDetail({ day }: { day: StationDay }) {
   }, [])
 
   return (
-    <div className="anim-slide px-4 py-[18px]">
+    <>
       <h2
         ref={headingRef}
         tabIndex={-1}
@@ -57,7 +37,8 @@ export function StationDetail({ day }: { day: StationDay }) {
         {st.name}
       </h2>
       <div className="mb-[12px] text-[0.7rem] tracking-[0.1em] text-ink3">
-        {st.town}　·　{cap != null ? `${cap} 席車柱` : '車柱數不明'}　·　基準時刻 {mdhm(day.origin)}
+        {st.town}　·　{cap != null ? `${cap} 席車柱` : '車柱數不明'}
+        {origin && `　·　基準時刻 ${mdhm(origin)}`}
       </div>
 
       {(full?.addr || hasCoord) && (
@@ -82,6 +63,65 @@ export function StationDetail({ day }: { day: StationDay }) {
           )}
         </div>
       )}
+    </>
+  )
+}
+
+/** 資料來源 / 模型 provenance（label–value 兩欄） */
+function Provenance({ day }: { day: StationDay }) {
+  return (
+    <dl className="mt-[14px] grid grid-cols-[3.2em_1fr] gap-x-3 gap-y-[3px] border-t border-hair pt-[10px] text-[0.68rem] leading-[1.55] text-ink3">
+      <dt className="tracking-[0.1em]">資料</dt>
+      {/* break-keep：中文連續字不斷（不會「本／查詢」拆字），只在空格 / 「；」等標點斷 */}
+      <dd className="m-0 break-keep tracking-[0.02em]">{day.source}</dd>
+      {day.model_job && (
+        <>
+          <dt className="tracking-[0.1em]">模型</dt>
+          <dd className="m-0 break-all font-mono tracking-normal">{day.model_job}</dd>
+        </>
+      )}
+    </dl>
+  )
+}
+
+export function StationDetail({ day }: { day: StationDay }) {
+  const { station: st, now, risk: k } = day
+  const cap = st.capacity
+  const avail = now?.avail ?? null
+  const free = now?.free ?? null
+  const t = k?.threshold ?? null
+
+  const pct = avail == null || !cap ? 0 : Math.min(100, Math.round((100 * avail) / cap))
+  const gaugeColor =
+    avail == null || !cap || t == null
+      ? 'var(--color-calm)'
+      : avail <= t
+        ? 'var(--color-hot)'
+        : cap - avail <= t
+          ? 'var(--color-cold)'
+          : 'var(--color-calm)'
+
+  const ab = useMemo(() => (k ? actionBlock(k) : null), [k])
+
+  const fcLast = day.forecast.length ? day.forecast[day.forecast.length - 1] : null
+
+  // 整站在這個時刻查無資料（停站期間）：後端回 200 + now / origin / risk = null。
+  // 站況（站名 / 行政區 / 車柱數 / 地址）照給；數字、量表、預測圖一律不渲染。
+  if (!now) {
+    return (
+      <div className="anim-slide px-4 py-[18px]">
+        <StationHead st={st} origin={day.origin} />
+        <p className="mt-[6px] border-l-2 border-edge bg-raise px-[14px] py-2 text-[0.82rem] leading-[1.5] text-ink2">
+          {day.actual_missing || '查無該站歷史'}
+        </p>
+        <Provenance day={day} />
+      </div>
+    )
+  }
+
+  return (
+    <div className="anim-slide px-4 py-[18px]">
+      <StationHead st={st} origin={day.origin} />
 
       {ab && (
         // 「行動」卡＝單站檢視的 headline：嚴重度 + 建議調度在最上，why 一句，支撐數字弱化一行。
@@ -229,18 +269,7 @@ export function StationDetail({ day }: { day: StationDay }) {
         </figcaption>
       </figure>
 
-      {/* 資料來源 / 模型 provenance：改成 label–value 兩欄，不再擠成一段跑馬燈 */}
-      <dl className="mt-[14px] grid grid-cols-[3.2em_1fr] gap-x-3 gap-y-[3px] border-t border-hair pt-[10px] text-[0.68rem] leading-[1.55] text-ink3">
-        <dt className="tracking-[0.1em]">資料</dt>
-        {/* break-keep：中文連續字不斷（不會「本／查詢」拆字），只在空格 / 「；」等標點斷 */}
-        <dd className="m-0 break-keep tracking-[0.02em]">{day.source}</dd>
-        {day.model_job && (
-          <>
-            <dt className="tracking-[0.1em]">模型</dt>
-            <dd className="m-0 break-all font-mono tracking-normal">{day.model_job}</dd>
-          </>
-        )}
-      </dl>
+      <Provenance day={day} />
     </div>
   )
 }

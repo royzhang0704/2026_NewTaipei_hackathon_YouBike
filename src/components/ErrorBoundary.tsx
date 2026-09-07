@@ -5,6 +5,8 @@ import { Component, type ErrorInfo, type ReactNode } from 'react'
 
 interface Props {
   children: ReactNode
+  /** 自訂錯誤畫面（例：塞在側欄裡的小區塊，不要用整頁置中版） */
+  fallback?: ReactNode
 }
 interface State {
   err: Error | null
@@ -24,6 +26,7 @@ export class ErrorBoundary extends Component<Props, State> {
   render() {
     const { err } = this.state
     if (!err) return this.props.children
+    if (this.props.fallback !== undefined) return this.props.fallback
     return (
       <div className="flex min-h-[50vh] flex-col items-center justify-center gap-3 p-8 text-center">
         <p className="text-[0.9rem] font-medium text-ink">畫面發生錯誤</p>

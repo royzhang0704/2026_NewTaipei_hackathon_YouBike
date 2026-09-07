@@ -4,6 +4,7 @@ import { X } from 'lucide-react'
 import { useAppStore } from '@/stores/useAppStore'
 import { useStationDay } from '@/api/queries'
 import { useUrlSync } from '@/hooks/useUrlSync'
+import { ErrorBoundary } from '@/components/ErrorBoundary'
 import { KpiStrip } from './KpiStrip'
 import { OverviewCaption } from './OverviewCaption'
 import { AlertList } from './AlertList'
@@ -90,7 +91,18 @@ export default function DashboardPage() {
                 ) : dayPending ? (
                   <div className="p-4 text-[0.82rem] text-ink3">查詢中…</div>
                 ) : day ? (
-                  <StationDetail key={day.station.uid} day={day} />
+                  // key＝uid：換站時連同 ErrorBoundary 一起重掛 → 某站 render 炸掉後，
+                  // 改選別站會復原（不會卡在錯誤畫面）。壞掉時只壞這個抽屜，不牽連整頁。
+                  <ErrorBoundary
+                    key={day.station.uid}
+                    fallback={
+                      <div className="m-4 border-l-2 border-hot bg-hot-wash px-3 py-2 text-[0.82rem] leading-[1.5] text-ink2">
+                        單站檢視載入失敗，請改選其他站或重新整理。
+                      </div>
+                    }
+                  >
+                    <StationDetail day={day} />
+                  </ErrorBoundary>
                 ) : null}
               </div>
             </aside>

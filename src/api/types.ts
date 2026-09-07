@@ -95,20 +95,25 @@ export interface StationDay {
     town: string
     capacity: number | null
   }
-  origin: string
+  // 該站在虛擬現在之前一格水位都沒有（停站期間，實測 ~11 站）→ 後端回 200 軟狀態：
+  // origin / now / risk 皆 null、actual 空陣列、附 actual_missing 說明（不是 422）。
+  origin: string | null
   now: {
     at: string
     avail: number | null
     free: number | null
     carried: boolean
-  }
+  } | null
   risk: DayRisk | null
   actual: ActualPoint[]
   forecast: ForecastPoint[]
   truth: TruthPoint[] | null
   model_job: string | null
   source: string
+  /** 有實況、但這站沒被預測到（僅缺預測線） */
   forecast_missing?: string | null
+  /** 連實況都沒有（整站在這個時刻查無資料） */
+  actual_missing?: string | null
   caveats?: string[] | null
 }
 
