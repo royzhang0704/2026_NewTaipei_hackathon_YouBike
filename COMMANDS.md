@@ -214,12 +214,30 @@ crontab -e   # 內容參考 jobs/crontab.txt
 
 ## 4. 資料庫
 
-PostgreSQL 17 跑在 podman 容器 `youbike-pg`（對外 port 5433，db `youbike`）。
+PostgreSQL 17 跑在 podman 容器 `youbike-pg`（對外 port 5433，db `youbike`），
+由 **`docker/docker-compose.yml`** 起 —— 那是唯一一份 compose，**第一次 up 就會自己
+把 `docker/bak/*.dump` 灌進去**，port / user / password / db 全部對齊 `app/config.py:72-78`
+的預設值，後端不用設任何環境變數。
 
 ```bash
+# 起庫（首次啟動自動還原，要數分鐘）
+podman-compose -f ../docker/docker-compose.yml up -d
+podman-compose -f ../docker/docker-compose.yml logs -f
+
 # 容器狀態
 podman ps
-podman start youbike-pg
+
+# ★ 灌完了沒看 healthy，不要看 Up —— initdb 階段的暫時 server 也會回 pg_isready，
+#   還原到一半就會顯示 Up。healthcheck 認的是還原完成才寫的 marker。
+podman inspect --format '{{.State.Health.Status}}' youbike-pg
+
+# 停容器（資料留著）
+podman-compose -f ../docker/docker-compose.yml down
+
+# ★ 換一份新 dump 一定要走這條 —— 直接 up 是換不掉資料的：volume 非空
+#   官方 image 就整個跳過 initdb，新 dump 一行不進而且不報錯。
+podman-compose -f ../docker/docker-compose.yml down -v
+podman-compose -f ../docker/docker-compose.yml up -d
 
 # ★ podman machine 睡眠後常假死：list 顯示 running 但 socket 拒連
 podman machine stop && podman machine start && podman start youbike-pg
@@ -261,13 +279,21 @@ done
 
 ## 5. 建置腳本（SQL）
 
+★ **平常不用跑這些** —— `docker/docker-compose.yml` 從 dump 起的庫已經含表結構、
+來源資料、level30 歷史與 cat 對照。這一節是「沒有 dump、要從最上游重建」的路，
+需要 `/Volumes/myPro/pgdump-20260827.sql.gz`（95,399,918 行），只有明勳本機有。
+
 ```bash
-bash sql/10_restore_source.sh          # 從 dump 還原來源資料（很久）
+bash sql/10_restore_source.sh          # 從原始 pgdump 還原來源表（很久）
 psql -f sql/20_backend_ddl.sql         # 建後端用的表
 bash sql/30_load_cat_map.sh            # ★ 灌 cat 對照表（換模型必跑）
 bash sql/31_load_proxy_cat.sh --verify # 只查代理現況，不寫 DB
 bash sql/31_load_proxy_cat.sh          # 重算鄰站代理
 ```
+
+⚠️ `10_restore_source.sh` 自己 `podman run` 建容器，且內含 `podman rm -f youbike-pg`
+—— 它會**強制刪掉 compose 起的那座容器**（資料在 volume 裡不會被刪，但容器沒了，
+要 `podman-compose ... up -d` 才回得來）。跑之前確認你真的要重建。
 
 ⚠️ **換模型時 `30_load_cat_map.sh` 是最危險的一步**：cat 編號由訓練時的字典序
 決定，錯了不會報錯 —— 每一站都拿到別站的預測，數字看起來完全合理。

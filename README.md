@@ -60,7 +60,7 @@ Job B 每 30 分鐘把全站預測寫進 `forecast_history`，前端查詢只讀
 | 層 | 技術 |
 |---|---|
 | 服務 | Python 3.12 + FastAPI + uvicorn（uv 管相依） |
-| 資料庫 | PostgreSQL 17（podman 容器 `youbike-pg`，port 5433） |
+| 資料庫 | PostgreSQL 17（podman 容器 `youbike-pg`，port 5433，由 `docker/docker-compose.yml` 起） |
 | 模型 | AWS SageMaker DeepAR，`ap-northeast-1` |
 | 資料源 | `baseline_grid`（歷史數據重採樣成 30 分格，2026-04~07）|
 | 前端 | 單檔 HTML（`meet/20260831/單站檢視.html`），`file://` 直開 |
@@ -183,29 +183,51 @@ Job A（即時 API）／Job C（歷史 API 自癒回補）／`sync_stations`（�
 ## 7. 快速開始
 
 ```bash
-cd backend
+cd code_backend
 
-# 1. 資料庫（PostgreSQL 17 容器）
-podman start youbike-pg
-bash sql/10_restore_source.sh                    # 從 dump 還原來源資料（很久）
+# 1. 資料庫 —— 第一次 up 就會自己把 docker/bak/*.dump 灌進去（要數分鐘）
+#    表結構、來源資料、level30 歷史、cat 對照全都在 dump 裡，不用再跑任何 sql/
+podman-compose -f ../docker/docker-compose.yml up -d
+podman-compose -f ../docker/docker-compose.yml logs -f          # 看還原進度
+
+# ★ 灌完了沒看 healthy，不要看 Up —— initdb 階段的暫時 server 也會回 pg_isready
+podman inspect --format '{{.State.Health.Status}}' youbike-pg
+
+# 2. SageMaker endpoint
+uv run python aws/deploy_endpoint.py
+
+# 3. 起服務（DB 參數全對齊 app/config.py 預設，不用設環境變數）
+uv run uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
+curl -s http://127.0.0.1:8000/healthz | python3 -m json.tool
+
+# 4. 排程
+crontab jobs/crontab.txt        # 或：while true; do bash jobs/run_job.sh tick; sleep 60; done
+```
+
+★ 換一份新的 dump 時**一定要先 `down -v`** —— volume 非空的話官方 postgres image
+會整個跳過 initdb，新 dump 一行都不會灌，而且不報錯：
+
+```bash
+podman-compose -f ../docker/docker-compose.yml down -v
+podman-compose -f ../docker/docker-compose.yml up -d
+```
+
+### 從最上游重建（只有明勳本機能跑）
+
+`sql/` 那串是「沒有 dump、要從原始 pgdump 重建」時才走的路，需要
+`/Volumes/myPro/pgdump-20260827.sql.gz`（95,399,918 行）。平常拿到 dump 的人不必跑：
+
+```bash
+bash sql/10_restore_source.sh                    # ★ 它自己 podman run 建容器，見下方警告
 psql -f sql/20_backend_ddl.sql                   # 建 4 張服務用表
 bash sql/30_load_cat_map.sh                      # ★ 灌 cat 對照表（換模型必跑）
 bash sql/31_load_proxy_cat.sh                    # 鄰站 cat 代理
 psql -f sql/40_scheduler_tables.sql -f sql/41_sys_config.sql -f sql/50_station_slot_average.sql
-
-# 2. level30 灌歷史（baseline_grid → level30，無限 carry，冪等）
 psql -v ON_ERROR_STOP=1 -f sql/42_level30_is_imputed.sql -f sql/43_level30_carry.sql
-
-# 3. SageMaker endpoint
-uv run python aws/deploy_endpoint.py
-
-# 4. 起服務
-uv run uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
-curl -s http://127.0.0.1:8000/healthz | python3 -m json.tool
-
-# 5. 排程
-crontab jobs/crontab.txt        # 或：while true; do bash jobs/run_job.sh tick; sleep 60; done
 ```
+
+⚠️ `10_restore_source.sh` 內含 `podman rm -f youbike-pg` —— 它會**強制刪掉 compose
+起的那座容器**。跑之前先確認你真的要重建，不是只想連 DB。
 
 前端：瀏覽器直接開 `meet/20260831/單站檢視.html`（右上角可改 API 位址）。
 
