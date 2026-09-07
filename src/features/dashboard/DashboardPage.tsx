@@ -69,7 +69,7 @@ export default function DashboardPage() {
             <aside
               ref={detailRef}
               aria-label="單站檢視"
-              className="anim-panel flex scroll-mt-16 flex-col border-t border-edge bg-panel xl:absolute xl:inset-y-0 xl:right-0 xl:z-20 xl:w-[clamp(360px,25rem,460px)] xl:border-l xl:border-t-0 xl:shadow-[-10px_0_28px_rgba(0,0,0,.38)]"
+              className="anim-panel drawer-float flex scroll-mt-16 flex-col border-t border-edge bg-float xl:absolute xl:inset-y-0 xl:right-0 xl:z-20 xl:w-[clamp(360px,25rem,460px)] xl:border-l xl:border-l-control xl:border-t-0"
             >
               <div className="phead flex-none">
                 <h3 className="m-0 text-[0.82rem] font-semibold tracking-[0.13em]">單站檢視</h3>

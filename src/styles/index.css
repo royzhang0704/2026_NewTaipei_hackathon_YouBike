@@ -9,6 +9,9 @@
   --color-bg: #0b0d10;
   --color-panel: #13161b;
   --color-raise: #181c22;
+  /* float：浮層（單站抽屜 / 之後的彈出卡）。深色靠「表面提亮」抬升，
+     不能靠加深陰影（黑影打在近黑底看不見）→ 比 panel 亮一階。 */
+  --color-float: #1a1f27;
 
   --color-hair: rgba(255, 255, 255, 0.085); /* 純裝飾分隔線 */
   --color-edge: rgba(255, 255, 255, 0.16); /* 結構邊界（header / footer / 浮層）*/
@@ -46,11 +49,17 @@
    [data-theme='dark'] 區塊，內容鏡射 @theme 全部同名 token（含 --color-focus）。 */
 :root {
   color-scheme: dark;
+  /* 單站抽屜的抬升：深色＝寬柔黑影 +「受光」內邊（表面已靠 --color-float 提亮）；
+     淺色見 [data-theme='light']（輕一階的落影）。放這裡而非 @theme：Tailwind 會把
+     shadow-* 的值在 build 時展開，[data-theme] 覆寫無效 → 改用自寫 class 直接讀本變數。 */
+  --shadow-float: -16px 0 40px -8px rgba(0, 0, 0, 0.55), inset 1px 0 0 rgba(255, 255, 255, 0.06);
 }
 [data-theme='light'] {
   color-scheme: light;
   --color-bg: #f4f3ef;
   --color-panel: #ffffff;
+  --color-float: #ffffff; /* 淺色本來就夠對比，維持純白，靠落影浮起 */
+  --shadow-float: -14px 0 34px -10px rgba(0, 0, 0, 0.24), inset 1px 0 0 rgba(255, 255, 255, 0.5);
   /* raise：#edeae3 跟 bg(#f4f3ef) / panel(#fff) 太接近，.phead 區帶讀不出來 → 壓深一階 */
   --color-raise: #e7e0d3;
   --color-hair: rgba(24, 26, 30, 0.1);
@@ -238,6 +247,13 @@ svg {
     padding: 6px 16px;
     border-bottom: 1px solid var(--color-hair);
     background: var(--color-raise);
+  }
+
+  /* 單站抽屜（xl 才是 absolute 浮層；<xl 是堆疊區塊，不需要影） */
+  @media (min-width: 80rem) {
+    .drawer-float {
+      box-shadow: var(--shadow-float);
+    }
   }
 }
 
