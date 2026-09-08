@@ -30,6 +30,8 @@ interface Props {
   /** 受控開關（不傳＝元件自管）——外部要用快捷鍵開啟時傳入 */
   open?: boolean
   onOpenChange?: (o: boolean) => void
+  /** 清單為空時的自訂訊息（收到目前輸入字串）。回傳 falsy 則用預設「找不到符合的項目」。 */
+  emptyRender?: (query: string) => ReactNode
   /** 覆蓋 trigger 樣式（tailwind-merge，後者勝）——例：縮成 chip 尺寸放進工具列 */
   triggerClassName?: string
 }
@@ -47,11 +49,17 @@ export function Combobox({
   trailingHint,
   open: openProp,
   onOpenChange,
+  emptyRender,
   triggerClassName,
 }: Props) {
   const [openState, setOpenState] = useState(false)
+  const [query, setQuery] = useState('')
   const open = openProp ?? openState
-  const setOpen = (o: boolean) => (onOpenChange ? onOpenChange(o) : setOpenState(o))
+  const setOpen = (o: boolean) => {
+    if (!o) setQuery('')
+    if (onOpenChange) onOpenChange(o)
+    else setOpenState(o)
+  }
 
   const selectedLabel = useMemo(
     () => items.find((i) => i.value === value)?.label ?? '',
@@ -103,13 +111,15 @@ export function Combobox({
             <div className="flex items-center gap-2 border-b border-hair px-[10px] py-2 focus-within:border-ink2">
               <Search className="size-[13px] flex-none opacity-40" />
               <Command.Input
+                value={query}
+                onValueChange={setQuery}
                 placeholder={searchPlaceholder}
                 className="min-w-0 flex-1 bg-transparent p-0 text-[0.86rem] outline-none placeholder:text-ink3"
               />
             </div>
             <Command.List className="max-h-[248px] overflow-y-auto p-1">
               <Command.Empty className="px-[10px] py-[18px] text-center text-[0.8rem] text-ink3">
-                找不到符合的項目
+                {emptyRender?.(query.trim()) || '找不到符合的項目'}
               </Command.Empty>
               {groups.map((grp) => (
                 <Command.Group
