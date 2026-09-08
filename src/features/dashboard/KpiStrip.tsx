@@ -98,53 +98,25 @@ export function KpiStrip() {
     sub: string
     tone: 'hot' | 'cold'
     dk: keyof Counts
-    /** 點了套用該篩選並捲到清單（四格都可點，對應主動警示的篩選） */
-    filter: Partial<{ side: AlertSide; level: AlertLevel }>
+    /** 這格對應哪一條篩選軸：風險（高/中）或供需方向（缺車/滿站） */
+    axis: 'side' | 'level'
+    val: AlertSide | AlertLevel
     active: boolean
   }
 
-  const tiles: Tile[] = [
-    {
-      k: '高風險',
-      v: counts.high,
-      u: '站',
-      sub: '已越線',
-      tone: 'hot',
-      dk: 'high',
-      filter: { side: 'all', level: 'high' },
-      active: alertLevel === 'high' && alertSide === 'all',
-    },
-    {
-      k: '中風險',
-      v: counts.mid,
-      u: '站',
-      sub: '1 小時內越線',
-      tone: 'hot',
-      dk: 'mid',
-      filter: { side: 'all', level: 'mid' },
-      active: alertLevel === 'mid' && alertSide === 'all',
-    },
-    {
-      k: '缺車',
-      v: counts.shortage,
-      u: '站',
-      sub: `建議補 ${nf(s.refill.bikes)} 台`,
-      tone: 'hot',
-      dk: 'shortage',
-      filter: { side: 'shortage', level: 'all' },
-      active: alertSide === 'shortage' && alertLevel === 'all',
-    },
-    {
-      k: '滿站',
-      v: counts.full,
-      u: '站',
-      sub: `建議取 ${nf(s.remove.bikes)} 台`,
-      tone: 'cold',
-      dk: 'full',
-      filter: { side: 'full', level: 'all' },
-      active: alertSide === 'full' && alertLevel === 'all',
-    },
-  ]
+  // 兩條獨立的軸：點某格只切自己那條軸、保留另一條 → 缺車＋高風險可同時成立、兩格都標「篩選中」，
+  // 與下方主動警示面板同一個 store、同一套 toggle 行為。
+  const tiles: Tile[] = (
+    [
+      { k: '高風險', v: counts.high, u: '站', sub: '已越線', tone: 'hot', dk: 'high', axis: 'level', val: 'high' },
+      { k: '中風險', v: counts.mid, u: '站', sub: '1 小時內越線', tone: 'hot', dk: 'mid', axis: 'level', val: 'mid' },
+      { k: '缺車', v: counts.shortage, u: '站', sub: `建議補 ${nf(s.refill.bikes)} 台`, tone: 'hot', dk: 'shortage', axis: 'side', val: 'shortage' },
+      { k: '滿站', v: counts.full, u: '站', sub: `建議取 ${nf(s.remove.bikes)} 台`, tone: 'cold', dk: 'full', axis: 'side', val: 'full' },
+    ] as const
+  ).map((t) => ({
+    ...t,
+    active: t.axis === 'level' ? alertLevel === t.val : alertSide === t.val,
+  }))
 
   return (
     <div role="group" aria-label="供需概況" className="border border-edge">
@@ -248,8 +220,14 @@ export function KpiStrip() {
             <button
               key={t.k}
               type="button"
-              // active 再按 → 取消篩選（回全部），跟 AlertList 嚴重度 chip 的 toggle-off 一致
-              onClick={() => setAlertFilter(t.active ? { side: 'all', level: 'all' } : t.filter)}
+              // 只切自己那條軸；active 再按 → 該軸回「全部」，跟 AlertList chip 的 toggle-off 一致
+              onClick={() =>
+                setAlertFilter(
+                  t.axis === 'side'
+                    ? { side: t.active ? 'all' : (t.val as AlertSide) }
+                    : { level: t.active ? 'all' : (t.val as AlertLevel) },
+                )
+              }
               aria-pressed={t.active}
               aria-controls="alert-list"
               aria-label={label}
