@@ -33,15 +33,6 @@ export function AlertList() {
   const { data, isPending, isError } = useAlerts({ limit: 1000, town_code: townCode || null })
   const all = useMemo(() => data?.items ?? [], [data])
 
-  const count = useMemo(
-    () => ({
-      all: all.length,
-      shortage: all.filter((i) => i.side === 'shortage').length,
-      full: all.filter((i) => i.side === 'full').length,
-    }),
-    [all],
-  )
-
   const filtered = useMemo(() => {
     let list = side === 'all' ? all : all.filter((i) => i.side === side)
     if (level !== 'all') list = list.filter((i) => i.level === level)
@@ -66,7 +57,8 @@ export function AlertList() {
       <div ref={topRef} aria-hidden />
       <div className="sticky top-0 z-10 border-b border-hair bg-panel">
         {/* 方向（全部/缺車/滿站）＋ 嚴重度（高/中）。嚴重度兩顆包成一組 → 大字級塞不下時
-            整組一起換到第二行（不會只有「中風險」落單），讀起來就是乾淨的兩排。 */}
+            整組一起換到第二行（不會只有「中風險」落單），讀起來就是乾淨的兩排。
+            分頁不帶計數：數字全交給下方狀態列與上方 KPI，避免不吃嚴重度的徽章跟畫面對不上。 */}
         <div className="flex flex-wrap items-center gap-[6px] px-3 pt-[7px]">
           {SIDES.map(({ key, label }) => (
             <button
@@ -76,7 +68,7 @@ export function AlertList() {
               aria-pressed={side === key}
               className={cn(segChip(side === key), 'px-2 py-[3px] text-[0.68rem]')}
             >
-              {label} <span className="tabular-nums opacity-70">{count[key]}</span>
+              {label}
             </button>
           ))}
           {/* 嚴重度：高 / 中 互斥 toggle（點目前選中的 → 回「全部風險」）。跟上方 KPI 連動同一個 store 值 */}
