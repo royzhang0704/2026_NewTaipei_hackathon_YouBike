@@ -28,6 +28,22 @@ export function AlertList() {
     topRef.current?.scrollIntoView({ block: 'nearest' })
   }, [townCode, side, level])
 
+  // 從地圖 / 抽屜選站 → 把清單裡對應那列帶進可視範圍（block:nearest：已看得到就不動；
+  // 不在目前篩選結果內 → 找不到 ref、安靜略過）。只在 selectedUid 真的變化時觸發，不搬焦點。
+  const rowRefs = useRef(new Map<string, HTMLButtonElement>())
+  const prevSel = useRef<string | null>(null)
+  useEffect(() => {
+    const uid = selectedUid
+    if (uid && uid !== prevSel.current) {
+      const el = rowRefs.current.get(uid)
+      if (el) {
+        const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches
+        el.scrollIntoView({ block: 'nearest', behavior: reduce ? 'auto' : 'smooth' })
+      }
+    }
+    prevSel.current = uid
+  }, [selectedUid])
+
   // 抓整包（跟 CityMap 的 {limit:1000, town_code} 同 key，共用快取不多打），側別 / 等級全在前端篩。
   // 1000 是後端硬上限（station_controller Query le=1000）；實際警示數遠低於此，unloaded 只是防呆。
   const { data, isPending, isError } = useAlerts({ limit: 1000, town_code: townCode || null })
@@ -118,6 +134,10 @@ export function AlertList() {
                 {/* 原本是 <li onClick>：鍵盤 Tab 不到、Enter 無效、報讀者不當它可互動。
                     改成原生 <button> → 免寫 keydown 就有 Enter/Space、focus 樣式吃全域 :focus-visible。 */}
                 <button
+                  ref={(el) => {
+                    if (el) rowRefs.current.set(it.station_uid, el)
+                    else rowRefs.current.delete(it.station_uid)
+                  }}
                   type="button"
                   aria-pressed={sel}
                   onClick={() => selectStation(it.station_uid)}
