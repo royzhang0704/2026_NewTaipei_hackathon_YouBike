@@ -12,7 +12,8 @@ import { Maximize } from 'lucide-react'
 import { useAlerts, useStations, useTowns } from '@/api/queries'
 import { FONT_PCT, useAppStore } from '@/stores/useAppStore'
 import { cn } from '@/lib/utils'
-import type { AlertItem } from '@/api/types'
+import { riskPhrase } from '@/lib/risk'
+import type { AlertItem, RiskLevel } from '@/api/types'
 import districtsGeo from '@/assets/newtaipei-districts.json'
 import outlineGeo from '@/assets/newtaipei-outline.json'
 import {
@@ -364,7 +365,7 @@ export function CityMap() {
             {hover.town}
             {hover.level === 'none'
               ? '供需健康'
-              : `${hover.side === 'shortage' ? '缺車' : '滿站'}・${hover.level === 'high' ? '高' : hover.level === 'mid' ? '中' : '低'}風險`}
+              : riskPhrase(hover.level as RiskLevel, hover.side === 'full' ? 'full' : 'shortage')}
             {hover.bikes ? (
               <>
                 <br />
@@ -400,7 +401,7 @@ export function CityMap() {
             <span className="absolute inline-block size-[11px] animate-ping rounded-full bg-hot/60" />
             <span className="inline-block size-[6px] rounded-full bg-hot" />
           </span>
-          高風險
+          立即處理
         </div>
         <div className="flex items-center gap-[10px] text-ink3">
           <span className="inline-block size-[11px] rounded-full border-2 border-ink" />

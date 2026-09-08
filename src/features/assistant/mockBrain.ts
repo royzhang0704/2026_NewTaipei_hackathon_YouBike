@@ -3,6 +3,7 @@
    僅處理「即時狀態」類問題；名詞定義與作業規範類待後端知識庫支援。 */
 
 import type { AlertItem, Health, Station, Town } from '@/api/types'
+import { riskPhrase } from '@/lib/risk'
 import type { AssistantAction, AssistantContext, ChatHandlers, ChatResult, WireMessage } from './types'
 
 export interface MockSnapshot {
@@ -11,8 +12,6 @@ export interface MockSnapshot {
   towns: Town[]
   health?: Health
 }
-
-const LV: Record<string, string> = { high: '高', mid: '中', low: '低', none: '無' }
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
 
@@ -68,9 +67,11 @@ function respond(q: string, snap: MockSnapshot, ctx?: AssistantContext): ChatRes
     const act = d?.action === 'refill' ? `建議補 ${d.bikes} 台` : d?.action === 'remove' ? `建議取 ${d.bikes} 台` : '暫可觀察'
     return {
       content:
-        `「${st.name}」（${st.town}）目前 ${LV[a.level]}風險・${a.side === 'shortage' ? '缺車' : '滿站'}。\n` +
+        `「${st.name}」（${st.town}）目前${riskPhrase(a.level, a.side)}。\n` +
         `可借 ${a.now?.avail ?? '—'}／容量 ${a.capacity ?? '?'}，${act}` +
-        (a.onset ? `，預計 ${a.onset.slice(11, 16)} 前後越線。` : '。'),
+        (a.onset
+          ? `，預計 ${a.onset.slice(11, 16)} 前後${a.side === 'shortage' ? '缺車' : '滿站'}。`
+          : '。'),
       actions,
       suggestions: [`${st.town}最急的是哪幾站？`, '哪些站要優先補車？'],
     }
@@ -85,7 +86,7 @@ function respond(q: string, snap: MockSnapshot, ctx?: AssistantContext): ChatRes
     return {
       content: `${town ?? '全區'}最該優先補車的站（依缺口排序）：\n${lines.join('\n')}`,
       actions: list.slice(0, 3).map((a) => ({ label: a.name, type: 'select_station', value: a.station_uid })),
-      suggestions: ['哪些站要取車？', `${town ?? '全市'}整體風險如何？`],
+      suggestions: ['哪些站要取車？', `${town ?? '全市'}供需概況？`],
     }
   }
 
@@ -111,7 +112,7 @@ function respond(q: string, snap: MockSnapshot, ctx?: AssistantContext): ChatRes
     const refill = townRefill(alerts, town).reduce((s, a) => s + (a.dispatch?.bikes ?? 0), 0)
     return {
       content:
-        `${town}：高風險 ${th.length} 站、中風險 ${tm.length} 站，合計待補約 ${refill} 台。` +
+        `${town}：已缺車或滿站 ${th.length} 站、預測再 ${tm.length} 站，合計待補約 ${refill} 台。` +
         (th[0] ? `\n最急：${th[0].name}（${th[0].side === 'shortage' ? '缺車' : '滿站'}）。` : ''),
       actions: [{ label: `地圖只看 ${town}`, type: 'filter_town', value: towns.find((t) => t.town === town)?.town_code ?? '' }],
       suggestions: [`${town}哪些站要優先補車？`, '其他行政區狀況呢？', '全市整體概況？'],
@@ -124,7 +125,7 @@ function respond(q: string, snap: MockSnapshot, ctx?: AssistantContext): ChatRes
     const top = hi.slice(0, 3).map((a) => `${a.name}（${a.town}・${a.side === 'shortage' ? '缺車' : '滿站'}）`)
     return {
       content:
-        `目前全市高風險 ${hi.length} 站、中風險 ${mid.length} 站，估計待補約 ${refill} 台。` +
+        `目前全市已缺車或滿站 ${hi.length} 站、預測再 ${mid.length} 站，估計待補約 ${refill} 台。` +
         (top.length ? `\n最急的幾站：\n・${top.join('\n・')}` : ''),
       actions: hi.slice(0, 3).map((a) => ({ label: a.name, type: 'select_station', value: a.station_uid })),
       suggestions: ['哪些站要優先補車？', '哪些站要取車？', '板橋區狀況如何？'],
@@ -135,7 +136,7 @@ function respond(q: string, snap: MockSnapshot, ctx?: AssistantContext): ChatRes
   return {
     content:
       '目前可查詢即時調度狀態，例如：\n' +
-      '・現在有幾個高風險站\n' +
+      '・現在有幾個站已缺車或滿站\n' +
       '・哪些站一小時內需補車\n' +
       '・指定站點接下來的供需\n' +
       '・指定行政區的整體狀況\n' +

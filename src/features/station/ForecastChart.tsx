@@ -346,7 +346,7 @@ function summarize(day: StationDay): string {
     const surplus = cap != null ? fc.find((p) => p.q90 >= cap - t) : undefined
     if (short) cross = `預測約 ${hhmm(short.at)} 可借量觸及缺車門檻 ${t} 台。`
     else if (surplus) cross = `預測約 ${hhmm(surplus.at)} 觸及滿站門檻。`
-    else cross = '預測期間不觸及風險門檻。'
+    else cross = '預測期間不會缺車或滿站。'
   }
 
   return (
