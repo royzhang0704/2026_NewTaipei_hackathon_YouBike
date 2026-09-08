@@ -56,23 +56,27 @@ export function AlertList() {
     <>
       <div ref={topRef} aria-hidden />
       <div className="sticky top-0 z-10 border-b border-hair bg-panel">
-        {/* 方向（全部/缺車/滿站）＋ 嚴重度（高/中）。嚴重度兩顆包成一組 → 大字級塞不下時
-            整組一起換到第二行（不會只有「中風險」落單），讀起來就是乾淨的兩排。
+        {/* 兩條互斥軸：方向（全部/缺車/滿站）與風險（高/中）。各自包成 role=group、中間一條
+            分隔線 → 視覺與報讀者都看得出「這是兩個單選」，不會誤以為四顆可同時選。
+            大字級塞不下時整組一起換到第二行（不會只有「中風險」落單）。
             分頁不帶計數：數字全交給下方狀態列與上方 KPI，避免不吃嚴重度的徽章跟畫面對不上。 */}
         <div className="flex flex-wrap items-center gap-[6px] px-3 pt-[7px]">
-          {SIDES.map(({ key, label }) => (
-            <button
-              key={key}
-              type="button"
-              onClick={() => setAlertFilter({ side: key })}
-              aria-pressed={side === key}
-              className={cn(segChip(side === key), 'px-2 py-[3px] text-[0.68rem]')}
-            >
-              {label}
-            </button>
-          ))}
-          {/* 嚴重度：高 / 中 互斥 toggle（點目前選中的 → 回「全部風險」）。跟上方 KPI 連動同一個 store 值 */}
-          <div className="flex gap-[6px]">
+          <div role="group" aria-label="供需方向" className="flex items-center gap-[6px]">
+            {SIDES.map(({ key, label }) => (
+              <button
+                key={key}
+                type="button"
+                onClick={() => setAlertFilter({ side: key })}
+                aria-pressed={side === key}
+                className={cn(segChip(side === key), 'px-2 py-[3px] text-[0.68rem]')}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+          <span className="mx-0.5 h-3.5 w-px flex-none self-center bg-hair" aria-hidden />
+          {/* 風險等級：高 / 中 互斥 toggle（點目前選中的 → 回「全部風險」）。跟上方 KPI 連動同一個 store 值 */}
+          <div role="group" aria-label="風險等級" className="flex items-center gap-[6px]">
             {(['high', 'mid'] as const).map((lv) => (
               <button
                 key={lv}
