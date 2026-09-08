@@ -47,7 +47,7 @@ export function KpiStrip() {
   const s = data?.summary
   const items = useMemo(() => data?.items ?? [], [data])
 
-  // 現在/預測（高/中風險）用 summary（伺服器算）；缺車/滿站用 items 現算 —— 跟主動警示同一套計法，數字對得上
+  // 高/中風險用 summary（伺服器算）；缺車/滿站用 items 現算 —— 跟主動警示 tab 同一套計法，數字對得上
   const counts = useMemo<Counts | null>(
     () =>
       s
@@ -104,14 +104,12 @@ export function KpiStrip() {
     active: boolean
   }
 
-  // 兩條獨立的軸：點某格只切自己那條軸、保留另一條 → 缺車＋現在可同時成立、兩格都標「篩選中」，
+  // 兩條獨立的軸：點某格只切自己那條軸、保留另一條 → 缺車＋高風險可同時成立、兩格都標「篩選中」，
   // 與下方主動警示面板同一個 store、同一套 toggle 行為。
-  // 「現在 / 預測」＝嚴重度軸（原「高 / 中風險」）：實測已越水位 vs 模型推估將越，比抽象的風險分級直觀，
-  // 且跟「缺車 / 滿站」組合起來會自然讀成「現在缺車」「預測滿站」。
   const tiles: Tile[] = (
     [
-      { k: '現在', v: counts.high, u: '站', sub: '已缺車或滿站', tone: 'hot', dk: 'high', axis: 'level', val: 'high' },
-      { k: '預測', v: counts.mid, u: '站', sub: '1 小時內缺車或滿站', tone: 'hot', dk: 'mid', axis: 'level', val: 'mid' },
+      { k: '高風險', v: counts.high, u: '站', sub: '已越線', tone: 'hot', dk: 'high', axis: 'level', val: 'high' },
+      { k: '中風險', v: counts.mid, u: '站', sub: '1 小時內越線', tone: 'hot', dk: 'mid', axis: 'level', val: 'mid' },
       { k: '缺車', v: counts.shortage, u: '站', sub: `建議補 ${nf(s.refill.bikes)} 台`, tone: 'hot', dk: 'shortage', axis: 'side', val: 'shortage' },
       { k: '滿站', v: counts.full, u: '站', sub: `建議取 ${nf(s.remove.bikes)} 台`, tone: 'cold', dk: 'full', axis: 'side', val: 'full' },
     ] as const

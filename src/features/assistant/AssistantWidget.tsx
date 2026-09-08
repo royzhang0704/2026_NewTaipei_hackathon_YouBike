@@ -25,12 +25,12 @@ const uid = () => Math.random().toString(36).slice(2, 10)
 const STORE_KEY = 'yb_assistant_thread'
 const MAX_KEEP = 50 // 持久化只留最近 N 則
 
-const SUGGESTIONS = ['現在有幾個站已缺車或滿站？', '哪些站一小時內要補車？', '板橋區狀況如何？']
+const SUGGESTIONS = ['現在有幾個高風險站？', '哪些站一小時內要補車？', '板橋區狀況如何？']
 
 const greeting = (): ChatMessage => ({
   id: 'greeting',
   role: 'assistant',
-  content: '可查詢目前的供需、缺車滿站與待調度站點。點下方範例，或直接輸入問題。',
+  content: '可查詢目前的供需、風險分級與待調度站點。點下方範例，或直接輸入問題。',
   at: Date.now(),
 })
 
