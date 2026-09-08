@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useAppStore, type AlertSide } from '@/stores/useAppStore'
 import { useAlerts } from '@/api/queries'
 import { segChip } from '@/components/ui/segChip'
@@ -27,6 +27,20 @@ export function AlertList() {
   useEffect(() => {
     topRef.current?.scrollIntoView({ block: 'nearest' })
   }, [townCode, side, level])
+
+  // sticky 表頭（篩選列＋狀態列）會浮在捲動區上緣 → 量它的高度當作 row 的 scroll-margin-top，
+  // 否則捲到上方的目標列會被表頭遮掉一半。字級 / chip 換行會改變高度，用 ResizeObserver 追。
+  const headRef = useRef<HTMLDivElement>(null)
+  const [headH, setHeadH] = useState(56)
+  useEffect(() => {
+    const el = headRef.current
+    if (!el) return
+    const sync = () => setHeadH(el.offsetHeight)
+    sync()
+    const ro = new ResizeObserver(sync)
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [])
 
   // 從地圖 / 抽屜選站 → 把清單裡對應那列帶進可視範圍（block:nearest：已看得到就不動；
   // 不在目前篩選結果內 → 找不到 ref、安靜略過）。只在 selectedUid 真的變化時觸發，不搬焦點。
@@ -71,7 +85,7 @@ export function AlertList() {
   return (
     <>
       <div ref={topRef} aria-hidden />
-      <div className="sticky top-0 z-10 border-b border-hair bg-panel">
+      <div ref={headRef} className="sticky top-0 z-10 border-b border-hair bg-panel">
         {/* 兩條互斥軸：方向（全部/缺車/滿站）與風險（高/中）。各自包成 role=group、中間一條
             分隔線 → 視覺與報讀者都看得出「這是兩個單選」，不會誤以為四顆可同時選。
             大字級塞不下時整組一起換到第二行（不會只有「中風險」落單）。
@@ -140,6 +154,7 @@ export function AlertList() {
                   }}
                   type="button"
                   aria-pressed={sel}
+                  style={{ scrollMarginTop: headH + 6 }}
                   onClick={() => selectStation(it.station_uid)}
                   className={cn(
                     'relative grid w-full cursor-pointer grid-cols-[2.3em_1fr_auto] items-baseline gap-x-3 px-4 py-[11px] text-left hover:bg-white/[0.03]',
