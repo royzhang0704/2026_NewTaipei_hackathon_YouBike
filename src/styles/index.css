@@ -97,6 +97,12 @@ html {
   font-size: 125%;
 }
 
+html {
+  /* 觸控：吃掉 double-tap 縮放的 300ms 延遲；點擊藍框自己用 hover / focus-visible 表達，不留原生反白 */
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+
 body {
   margin: 0;
   background: var(--color-bg);
@@ -110,6 +116,11 @@ body {
 
 svg {
   display: block;
+}
+
+/* 停用狀態一律 not-allowed 游標（配合各元件的 opacity + 原生 disabled 屬性，達三通道） */
+:disabled {
+  cursor: not-allowed;
 }
 
 /* 鍵盤焦點框（WCAG 2.4.7 Focus Visible）。:where() → specificity 0，元件仍可個別覆寫；

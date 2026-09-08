@@ -319,7 +319,7 @@ export function AssistantWidget() {
         onClick={() => setOpen(true)}
         aria-label="開啟調度助理（快捷鍵 A）"
         title="調度助理（A）"
-        className="fixed bottom-[4.5rem] right-5 z-40 flex size-12 items-center justify-center rounded-full border border-control bg-float text-hot shadow-[0_8px_24px_rgba(0,0,0,.32)] hover:bg-raise focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-focus)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--color-bg)]"
+        className="fixed bottom-[4.5rem] right-5 z-40 flex size-12 items-center justify-center rounded-full border border-control bg-float text-hot shadow-[0_8px_24px_rgba(0,0,0,.32)] hover:bg-raise active:bg-hair focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-focus)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--color-bg)]"
       >
         <Bot className="size-[19px]" aria-hidden />
       </button>
@@ -377,7 +377,7 @@ export function AssistantWidget() {
           <button
             type="button"
             onClick={doClearThread}
-            className="min-h-[24px] flex-none rounded-xs border border-hot bg-hot px-[10px] text-[0.72rem] font-medium text-bg hover:opacity-90"
+            className="min-h-[24px] flex-none rounded-xs border border-hot bg-hot px-[10px] text-[0.72rem] font-medium text-bg hover:opacity-90 active:opacity-80"
           >
             清除
           </button>
@@ -633,7 +633,7 @@ export function AssistantWidget() {
             type="submit"
             disabled={!input.trim()}
             aria-label="送出"
-            className="flex size-[38px] flex-none items-center justify-center rounded-xs border border-control text-ink2 hover:text-ink disabled:opacity-40"
+            className="flex size-[38px] flex-none items-center justify-center rounded-xs border border-control text-ink2 hover:text-ink active:bg-hair disabled:opacity-40"
           >
             <CornerDownLeft className="size-[15px]" aria-hidden />
           </button>

@@ -131,7 +131,7 @@ export function AppShell() {
             type="button"
             onClick={toggleTheme}
             aria-label={theme === 'dark' ? '切換為淺色主題' : '切換為深色主題'}
-            className="flex size-8 items-center justify-center rounded-xs border border-control bg-panel text-ink3 hover:text-ink"
+            className="flex size-8 items-center justify-center rounded-xs border border-control bg-panel text-ink3 hover:text-ink active:bg-hair"
           >
             {theme === 'dark' ? <Sun className="size-[15px]" /> : <Moon className="size-[15px]" />}
           </button>

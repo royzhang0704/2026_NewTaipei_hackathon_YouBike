@@ -94,6 +94,9 @@ export function LoginPage() {
           id="login-account"
           autoFocus
           autoComplete="username"
+          autoCapitalize="none"
+          autoCorrect="off"
+          spellCheck={false}
           disabled={submitting}
           value={account}
           onChange={(e) => {
@@ -132,7 +135,7 @@ export function LoginPage() {
         <button
           type="submit"
           disabled={!account.trim() || submitting}
-          className="mt-6 flex w-full items-center justify-center gap-2 rounded-xs bg-ink py-2.5 text-[0.9rem] font-semibold tracking-[0.06em] text-bg hover:opacity-90 disabled:opacity-40"
+          className="mt-6 flex w-full items-center justify-center gap-2 rounded-xs bg-ink py-2.5 text-[0.9rem] font-semibold tracking-[0.06em] text-bg hover:opacity-90 active:opacity-80 disabled:opacity-40"
         >
           {submitting && <Loader2 className="size-4 animate-spin" aria-hidden />}
           {submitting ? '登入中…' : '登入'}
