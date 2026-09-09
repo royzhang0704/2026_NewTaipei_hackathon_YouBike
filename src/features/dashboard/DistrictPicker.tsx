@@ -135,8 +135,9 @@ export function DistrictPicker({ trailing }: { trailing?: ReactNode }) {
       type="button"
       role="radio"
       aria-checked={townCode === code}
+      // 「最近查過」只用 aria-label 帶（給報讀者）；視覺分辨靠前面那條分隔線，不掛 title
+      // ——native tooltip 會浮出來疊到上方 KPI 條，看起來像多一顆徽章。
       aria-label={isRecent ? `${label}（最近查詢）` : undefined}
-      title={isRecent ? '最近查詢' : undefined}
       tabIndex={idx === tabbableIdx ? 0 : -1}
       onClick={() => selectTown(code)}
       className={chipClass(townCode === code)}

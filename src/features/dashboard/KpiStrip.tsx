@@ -47,19 +47,32 @@ export function KpiStrip() {
   const s = data?.summary
   const items = useMemo(() => data?.items ?? [], [data])
 
-  // 高/中風險用 summary（伺服器算）；缺車/滿站用 items 現算 —— 跟主動警示 tab 同一套計法，數字對得上
-  const counts = useMemo<Counts | null>(
-    () =>
-      s
-        ? {
-            high: s.high,
-            mid: s.mid,
-            shortage: items.filter((i) => i.side === 'shortage').length,
-            full: items.filter((i) => i.side === 'full').length,
-          }
-        : null,
-    [s, items],
-  )
+  // items 是警示清單（level!==none），limit:1000；正常遠低於此。爆量被砍時 data.total > items.length。
+  const truncated = (data?.total ?? 0) > items.length
+
+  // 四格全部從同一份 items 現算 → 「依時機（現在/預測）」與「依方向（缺車/滿站）」是同一集合的兩種切法、
+  // 加起來永遠對得上。被截斷時：時機兩格改回 summary（伺服器算、沒砍），方向兩格照現算（會偏少但有下方「另有 N 筆」提示）。
+  const counts = useMemo<Counts | null>(() => {
+    if (!s) return null
+    const n = (pred: (i: (typeof items)[number]) => boolean) => items.filter(pred).length
+    return {
+      high: truncated ? s.high : n((i) => i.level === 'high'),
+      mid: truncated ? s.mid : n((i) => i.level === 'mid'),
+      shortage: n((i) => i.side === 'shortage'),
+      full: n((i) => i.side === 'full'),
+    }
+  }, [s, items, truncated])
+
+  // 時機兩格的「缺／滿」拆分（填 caption、也讓兩軸加總對得上）。截斷時現算不可信 → 不給。
+  const split = useMemo(() => {
+    if (truncated) return null
+    const c = (lvl: string, side: string) =>
+      items.filter((i) => i.level === lvl && i.side === side).length
+    return {
+      high: `缺 ${c('high', 'shortage')} · 滿 ${c('high', 'full')}`,
+      mid: `缺 ${c('mid', 'shortage')} · 滿 ${c('mid', 'full')}`,
+    }
+  }, [items, truncated])
   const deltas = useCountsDelta(counts, data?.origin, townCode)
 
   if (isError && !data) {
@@ -106,11 +119,12 @@ export function KpiStrip() {
 
   // 兩條獨立的軸：點某格只切自己那條軸、保留另一條 → 缺車＋高風險可同時成立、兩格都標「篩選中」，
   // 與下方主動警示面板同一個 store、同一套 toggle 行為。
+  // 嚴重度兩格的白話整句就放在 k（標題列），跟「缺車／滿站」同一個位置 → 四格結構一致、頂端不留空。
   const tiles: Tile[] = (
     [
-      { k: '高風險', v: counts.high, u: '站', sub: '已越線', tone: 'hot', dk: 'high', axis: 'level', val: 'high' },
-      { k: '中風險', v: counts.mid, u: '站', sub: '1 小時內越線', tone: 'hot', dk: 'mid', axis: 'level', val: 'mid' },
-      { k: '缺車', v: counts.shortage, u: '站', sub: `建議補 ${nf(s.refill.bikes)} 台`, tone: 'hot', dk: 'shortage', axis: 'side', val: 'shortage' },
+      { k: '已空站或滿站', v: counts.high, u: '站', sub: split?.high ?? '', tone: 'hot', dk: 'high', axis: 'level', val: 'high' },
+      { k: '1 小時內空站或滿站', v: counts.mid, u: '站', sub: split?.mid ?? '', tone: 'hot', dk: 'mid', axis: 'level', val: 'mid' },
+      { k: '空站', v: counts.shortage, u: '站', sub: `建議補 ${nf(s.refill.bikes)} 台`, tone: 'hot', dk: 'shortage', axis: 'side', val: 'shortage' },
       { k: '滿站', v: counts.full, u: '站', sub: `建議取 ${nf(s.remove.bikes)} 台`, tone: 'cold', dk: 'full', axis: 'side', val: 'full' },
     ] as const
   ).map((t) => ({
@@ -127,28 +141,19 @@ export function KpiStrip() {
       )}
 
       {/* 資料信心度：模型覆蓋率（掉 >5% → 琥珀 + 警示圖示，不靠顏色單獨表意）＋「暫不派車」註記。
-          不放「資料截至」——那在「供需概況」副標已有。 */}
-      <p
-        className={cn(
-          'flex flex-wrap items-center gap-x-2 border-b border-hair bg-panel px-4 py-[7px] text-[0.68rem] tracking-[0.04em]',
-          coverageLow ? 'text-hot' : 'text-ink3',
-        )}
-      >
-        {coverageLow && <AlertTriangle className="size-[11px] flex-none" aria-hidden />}
-        <span>
+          不放「資料截至」——那在「供需概況」副標已有。
+          每段各自 whitespace-nowrap，靠 flex gap 分隔（不用「·」）→ 窄視窗 / 大字級只在段之間換行，不會斷句、不會孤立分隔點。
+          警示色只落在圖示＋覆蓋率本身；兩段註解維持 ink3，避免整行都是琥珀在喊。 */}
+      <p className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-hair bg-panel px-4 py-[7px] text-[0.68rem] tracking-[0.04em] text-ink3">
+        {coverageLow && <AlertTriangle className="size-[11px] flex-none text-hot" aria-hidden />}
+        <span className={cn('whitespace-nowrap', coverageLow && 'font-medium text-hot')}>
           模型覆蓋 {nf(covered)} / {nf(total)} 站
         </span>
         {coverageLow && (
-          <>
-            <span aria-hidden>·</span>
-            <span>{nf(s.no_forecast)} 站無預測數據，未納入下列統計</span>
-          </>
+          <span className="whitespace-nowrap">{nf(s.no_forecast)} 站無預測數據，未納入下列統計</span>
         )}
         {s.hold > 0 && (
-          <>
-            <span aria-hidden>·</span>
-            <span>缺車站另有 {nf(s.hold)} 站預期自行退燒、未計入</span>
-          </>
+          <span className="whitespace-nowrap">空站另有 {nf(s.hold)} 站預期自行退燒、未計入</span>
         )}
       </p>
 
@@ -158,9 +163,26 @@ export function KpiStrip() {
           const d = deltas[t.dk]
           const moved = !!d
           const deltaLabel = moved ? `，較上一批次${d! > 0 ? '增加' : '減少'} ${Math.abs(d!)}` : ''
-          const label = `${t.k}，${nf(t.v)} ${t.u}，${t.sub}${deltaLabel}，${
+          const label = `${t.k}，${nf(t.v)} ${t.u}${t.sub ? `，${t.sub}` : ''}${deltaLabel}，${
             t.active ? '按下取消篩選' : '按下篩選警示清單'
           }`
+          // 嚴重度兩格（axis==='level'）：標題列放白話整句、字距收窄；說明列僅在有變化量時出現。
+          // 缺車/滿站：短標題＋建議台數的標準三列。
+          const primary = t.axis === 'level'
+
+          const delta = moved && (
+            <span
+              key={`d${d}`}
+              aria-hidden
+              className={cn(
+                'kpi-rise inline-flex items-center gap-[1px] tabular-nums',
+                d! > 0 ? 'text-hot' : 'text-ink2',
+              )}
+            >
+              {d! > 0 ? <ArrowUp className="size-[10px]" /> : <ArrowDown className="size-[10px]" />}
+              {Math.abs(d!)}
+            </span>
+          )
 
           const inner = (
             <>
@@ -168,9 +190,12 @@ export function KpiStrip() {
                 className={cn('absolute inset-y-0 left-0 w-[2px]', t.tone === 'hot' ? 'bg-hot' : 'bg-cold')}
                 aria-hidden
               />
+              {/* 標題列：短標題（缺車/滿站）或白話整句（嚴重度兩格）都放這，四格對齊、頂端不留空。
+                  整句較長 → 收窄字距、允許必要時折行。 */}
               <span
                 className={cn(
-                  'mb-[9px] flex items-center gap-1 text-[0.68rem] tracking-[0.16em]',
+                  'mb-[9px] flex min-h-[0.95rem] flex-wrap items-center gap-x-1 text-[0.68rem]',
+                  primary ? 'tracking-[0.02em]' : 'tracking-[0.16em]',
                   t.active ? 'text-ink' : 'text-ink3',
                 )}
               >
@@ -193,26 +218,13 @@ export function KpiStrip() {
                   {t.u}
                 </span>
               </div>
-              <div className="mt-[9px] flex items-center gap-x-2 text-[0.71rem] text-ink3">
-                <span>{t.sub}</span>
-                {moved && (
-                  <span
-                    key={`d${d}`}
-                    aria-hidden
-                    className={cn(
-                      'kpi-rise inline-flex items-center gap-[1px] tabular-nums',
-                      d! > 0 ? 'text-hot' : 'text-ink2',
-                    )}
-                  >
-                    {d! > 0 ? (
-                      <ArrowUp className="size-[10px]" />
-                    ) : (
-                      <ArrowDown className="size-[10px]" />
-                    )}
-                    {Math.abs(d!)}
-                  </span>
-                )}
-              </div>
+              {/* 說明列：一般格放建議台數；嚴重度格只在有變化量時出現，否則收掉、底部留白當呼吸空間 */}
+              {(t.sub || delta) && (
+                <div className="mt-[9px] flex items-center gap-x-2 text-[0.71rem] text-ink3">
+                  {t.sub ? <span>{t.sub}</span> : null}
+                  {delta}
+                </div>
+              )}
             </>
           )
 
@@ -232,7 +244,9 @@ export function KpiStrip() {
               aria-controls="alert-list"
               aria-label={label}
               className={cn(
-                'relative bg-panel px-4 py-3 text-left transition-colors hover:bg-raise focus-visible:-outline-offset-2',
+                'relative flex flex-col bg-panel px-4 py-3 text-left transition-colors hover:bg-raise focus-visible:-outline-offset-2',
+                // 嚴重度格少一列時（截斷、無「缺／滿」拆分）垂直置中，留白平均分上下；有拆分則跟其他格一樣三列填滿
+                primary && !t.sub && 'justify-center',
                 t.active && 'bg-raise',
               )}
             >

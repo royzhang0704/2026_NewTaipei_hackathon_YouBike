@@ -263,7 +263,7 @@ export function StationDetail({ day }: { day: StationDay }) {
           </p>
           {t != null && (
             <p className="m-0 mt-[2px] text-[0.7rem] leading-[1.6] tracking-[0.04em] text-ink3">
-              低／高水位 ＝ 缺車／滿站風險線（容量 15%／85%）
+              低／高水位 ＝ 空站／滿站風險線（容量 15%／85%）
             </p>
           )}
         </figcaption>

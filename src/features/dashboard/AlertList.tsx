@@ -8,7 +8,7 @@ const LV: Record<string, string> = { high: '高', mid: '中', low: '低', none: 
 
 const SIDES: { key: AlertSide; label: string }[] = [
   { key: 'all', label: '全部' },
-  { key: 'shortage', label: '缺車' },
+  { key: 'shortage', label: '空站' },
   { key: 'full', label: '滿站' },
 ]
 
@@ -69,10 +69,10 @@ export function AlertList() {
     return list
   }, [all, side, level])
 
-  // 報讀者狀態訊息：篩選一變、count 一變就唸「（高風險・）缺車・共 N 筆待處理」
+  // 報讀者狀態訊息：篩選一變、count 一變就唸「（高風險・）空站・共 N 筆待處理」
   const scopeLabel = [
     level === 'high' ? '高風險' : level === 'mid' ? '中風險' : '',
-    side === 'shortage' ? '缺車' : side === 'full' ? '滿站' : '',
+    side === 'shortage' ? '空站' : side === 'full' ? '滿站' : '',
   ]
     .filter(Boolean)
     .join('・')
@@ -177,6 +177,7 @@ export function AlertList() {
                     </span>
                   </span>
                   <span className="whitespace-nowrap text-right text-[0.7rem] leading-[1.4] tracking-[0.04em] text-ink3">
+                    {/* 調度台數＝這列的行動數字：上色（缺車暖／滿站冷），方向也靠「補 / 取」字 */}
                     <b
                       className={cn(
                         'num block text-[1rem] tracking-[-0.02em]',

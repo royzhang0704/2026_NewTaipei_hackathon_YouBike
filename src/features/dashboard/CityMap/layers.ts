@@ -80,7 +80,7 @@ const COLOR_BY_SIDE = [
   'shortage',
   '#EE5A34',
   'full',
-  '#5591F2',
+  '#5A86D6', // 對齊 --color-cold（去一階飽和）
   '#6A6E75',
 ] as unknown as FilterSpecification
 
@@ -200,7 +200,7 @@ export const STATION_LAYERS = {
       'circle-stroke-color': [
         'case',
         ['==', ['get', 'side'], 'full'],
-        '#5591F2',
+        '#5A86D6',
         theme === 'light' ? 'rgba(255,255,255,0.9)' : 'rgba(11,13,16,0.7)',
       ],
       'circle-stroke-opacity': dimFactor(sel),

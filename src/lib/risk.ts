@@ -88,7 +88,7 @@ export function actionBlock(k: DayRisk): ActionBlock {
   return {
     tone: s.level,
     urgent,
-    sideWord: lend ? '缺車' : '滿站',
+    sideWord: lend ? '空站' : '滿站',
     levelWord: LV_WORD[s.level],
     action,
     actionKind,

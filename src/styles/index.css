@@ -7,14 +7,16 @@
    ────────────────────────────────────────────────────────────── */
 @theme {
   --color-bg: #0b0d10;
-  --color-panel: #13161b;
-  --color-raise: #181c22;
+  /* panel / raise / float：三階「表面抬升」。原 panel 只比 bg 亮一小階（#13161b），
+     KPI 條 / 地圖卡 / 警示卡幾乎漂在近黑裡、只靠細邊框分 → 各往上帶一階，卡片結構一眼讀得出。 */
+  --color-panel: #171a21;
+  --color-raise: #1e232b;
   /* float：浮層（單站抽屜 / 之後的彈出卡）。深色靠「表面提亮」抬升，
-     不能靠加深陰影（黑影打在近黑底看不見）→ 比 panel 亮一階。 */
-  --color-float: #1a1f27;
+     不能靠加深陰影（黑影打在近黑底看不見）→ 比 raise 再亮一階。 */
+  --color-float: #242a33;
 
   --color-hair: rgba(255, 255, 255, 0.085); /* 純裝飾分隔線 */
-  --color-edge: rgba(255, 255, 255, 0.16); /* 結構邊界（header / footer / 浮層）*/
+  --color-edge: rgba(255, 255, 255, 0.19); /* 結構邊界（header / footer / 浮層）；隨表面抬升略加對比 */
   /* control：ghost 型互動元件的框（chip / 輸入框 / 分段鈕）。edge(0.16) 對 panel 僅 ~1.5:1，
      未達 WCAG 1.4.11 UI 元件 3:1 → 加一階到 ~3:1，未選中的按鈕才看得出是可點的控制項。 */
   --color-control: rgba(255, 255, 255, 0.36);
@@ -25,12 +27,12 @@
   --color-ink3: #8f959f;
 
   --color-hot: #ee5a34; /* 無車可借 / 缺車 */
-  --color-cold: #5591f2; /* 無位可還 / 滿站 */
+  --color-cold: #5a86d6; /* 無位可還 / 滿站 —— 去一階飽和，離「連結藍」遠一點、更像資料藍 */
   --color-calm: #6a6e75; /* 供需健康：刻意中性 */
   --color-gold: #c99a3b; /* 對答案：實際值 */
 
   --color-hot-wash: rgba(238, 90, 52, 0.12);
-  --color-cold-wash: rgba(85, 145, 242, 0.12);
+  --color-cold-wash: rgba(90, 134, 214, 0.12);
 
   --radius-xs: 2px;
   --radius-sm: 4px; /* 浮層（Popover / 卡片）用；2px 在大面積元素偏生硬 */
@@ -110,7 +112,11 @@ body {
   font-family: var(--font-sans);
   font-size: 0.906rem; /* ≈14.5px @100%，改用 rem 讓它跟著縮放 */
   line-height: 1.68;
-  -webkit-font-smoothing: antialiased;
+  /* font-weight 500（Medium）：PingFang / Noto Sans 的 Regular 在深色底小字下太細（會議回饋「字太細」）。
+     這介面全是標籤 / 數字 / 短列、無長段落 → 500 讀起來紮實又不到粗體。標題(600)、<b>(700) 不受影響。 */
+  font-weight: 500;
+  /* 不設 -webkit-font-smoothing: antialiased —— 它在 macOS 會把字渲染得更細更淡，正是「太細」的元凶。
+     交回瀏覽器預設（subpixel）讓筆畫飽一點。 */
   text-rendering: optimizeLegibility;
 }
 

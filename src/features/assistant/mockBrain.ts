@@ -54,7 +54,7 @@ function respond(q: string, snap: MockSnapshot, ctx?: AssistantContext): ChatRes
 
   // ── 單站展望 ───────────────────────────────
   const st = findStation(q, stations)
-  if (st && /(缺車|滿站|風險|狀況|怎樣|如何|預測|要補|要取)/.test(q)) {
+  if (st && /(空站|缺車|滿站|風險|狀況|怎樣|如何|預測|要補|要取)/.test(q)) {
     const a = alerts.find((x) => x.station_uid === st.uid)
     const actions: AssistantAction[] = [{ label: `在單站檢視開啟「${st.name}」`, type: 'select_station', value: st.uid }]
     if (!a || a.level === 'none') {
@@ -68,7 +68,7 @@ function respond(q: string, snap: MockSnapshot, ctx?: AssistantContext): ChatRes
     const act = d?.action === 'refill' ? `建議補 ${d.bikes} 台` : d?.action === 'remove' ? `建議取 ${d.bikes} 台` : '暫可觀察'
     return {
       content:
-        `「${st.name}」（${st.town}）目前 ${LV[a.level]}風險・${a.side === 'shortage' ? '缺車' : '滿站'}。\n` +
+        `「${st.name}」（${st.town}）目前 ${LV[a.level]}風險・${a.side === 'shortage' ? '空站' : '滿站'}。\n` +
         `可借 ${a.now?.avail ?? '—'}／容量 ${a.capacity ?? '?'}，${act}` +
         (a.onset ? `，預計 ${a.onset.slice(11, 16)} 前後越線。` : '。'),
       actions,
@@ -77,7 +77,7 @@ function respond(q: string, snap: MockSnapshot, ctx?: AssistantContext): ChatRes
   }
 
   // ── 待補 / 待取清單 ────────────────────────
-  if (/(補車|要補|缺車|優先|派車|人力|調度車)/.test(q)) {
+  if (/(補車|要補|空站|缺車|優先|派車|人力|調度車)/.test(q)) {
     const list = townRefill(alerts, town).slice(0, 6)
     if (!list.length)
       return { content: `${town ?? '目前全區'}沒有待補車的站。`, suggestions: ['全市概況如何？', '哪些站要取車？'] }
@@ -112,7 +112,7 @@ function respond(q: string, snap: MockSnapshot, ctx?: AssistantContext): ChatRes
     return {
       content:
         `${town}：高風險 ${th.length} 站、中風險 ${tm.length} 站，合計待補約 ${refill} 台。` +
-        (th[0] ? `\n最急：${th[0].name}（${th[0].side === 'shortage' ? '缺車' : '滿站'}）。` : ''),
+        (th[0] ? `\n最急：${th[0].name}（${th[0].side === 'shortage' ? '空站' : '滿站'}）。` : ''),
       actions: [{ label: `地圖只看 ${town}`, type: 'filter_town', value: towns.find((t) => t.town === town)?.town_code ?? '' }],
       suggestions: [`${town}哪些站要優先補車？`, '其他行政區狀況呢？', '全市整體概況？'],
     }
@@ -121,7 +121,7 @@ function respond(q: string, snap: MockSnapshot, ctx?: AssistantContext): ChatRes
   // ── 全市概況 ───────────────────────────────
   if (/(概況|狀況|現在|多少|幾個|高風險|整體|總覽)/.test(q)) {
     const refill = alerts.filter((a) => a.dispatch?.action === 'refill').reduce((s, a) => s + (a.dispatch?.bikes ?? 0), 0)
-    const top = hi.slice(0, 3).map((a) => `${a.name}（${a.town}・${a.side === 'shortage' ? '缺車' : '滿站'}）`)
+    const top = hi.slice(0, 3).map((a) => `${a.name}（${a.town}・${a.side === 'shortage' ? '空站' : '滿站'}）`)
     return {
       content:
         `目前全市高風險 ${hi.length} 站、中風險 ${mid.length} 站，估計待補約 ${refill} 台。` +

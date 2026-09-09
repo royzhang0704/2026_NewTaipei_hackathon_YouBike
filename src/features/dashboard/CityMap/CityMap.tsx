@@ -364,7 +364,7 @@ export function CityMap() {
             {hover.town}
             {hover.level === 'none'
               ? '供需健康'
-              : `${hover.side === 'shortage' ? '缺車' : '滿站'}・${hover.level === 'high' ? '高' : hover.level === 'mid' ? '中' : '低'}風險`}
+              : `${hover.side === 'shortage' ? '空站' : '滿站'}・${hover.level === 'high' ? '高' : hover.level === 'mid' ? '中' : '低'}風險`}
             {hover.bikes ? (
               <>
                 <br />
@@ -387,7 +387,7 @@ export function CityMap() {
       {/* 圖例移到左上：右上留給 NavigationControl（原本兩者疊在一起）。pointer-events-none 不擋操作 */}
       <div className="pointer-events-none absolute left-2 top-2 z-10 rounded-xs border border-edge bg-bg/85 px-[14px] py-[10px] text-[0.72rem] leading-[1.9] tracking-[0.06em] text-ink2 backdrop-blur">
         <div className="flex items-center gap-[10px]">
-          <span className="inline-block size-[11px] rounded-full bg-hot" />缺車風險
+          <span className="inline-block size-[11px] rounded-full bg-hot" />空站風險
         </div>
         <div className="flex items-center gap-[10px]">
           <span className="inline-block size-[11px] rounded-full border-[2px] border-cold bg-transparent" />滿站風險
