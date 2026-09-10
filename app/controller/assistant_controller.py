@@ -11,7 +11,7 @@ router = APIRouter()
 @router.post("/assistant/chat")
 async def assistant_chat(req: Request):
     """調度助理對話端點（SSE）。契約見前端 features/assistant/types.ts：
-       req  { messages: [{role, content}], context: {town_code, station_uid, virtual_now} }
+       req  { messages: [{role, content}], context: {town_code, station_uid, virtual_now, thread_id} }
        SSE  data: {"type":"delta"|"sources"|"actions"|"suggestions"|"done"|"error", ...}
 
     即時意圖直接查 DB 回答（精確、附按鈕）；其餘轉 AgentCore 知識庫。

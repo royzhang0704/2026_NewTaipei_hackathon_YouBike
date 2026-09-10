@@ -1,0 +1,31 @@
+{"id": "city-overview", "messages": [{"role": "user", "content": "現在全市概況？"}], "context": {}, "expect": {"contains": ["空站"], "not_contains": ["來源", "**", "##"], "max_sentences": 5, "numbers_in_data": true}}
+{"id": "district-status", "messages": [{"role": "user", "content": "板橋區現在狀況如何？"}], "context": {}, "expect": {"contains": ["板橋"], "not_contains": ["來源", "**"], "max_sentences": 5, "numbers_in_data": true}}
+{"id": "district-compare", "messages": [{"role": "user", "content": "比較板橋和三重的調度狀況"}], "context": {}, "expect": {"contains": ["板橋", "三重"], "not_contains": ["來源", "**"], "numbers_in_data": true}}
+{"id": "refill-list", "messages": [{"role": "user", "content": "哪些站要優先補車？"}], "context": {}, "expect": {"contains": ["補"], "not_contains": ["來源", "**"], "numbers_in_data": true}}
+{"id": "remove-list", "messages": [{"role": "user", "content": "哪些站要優先取車？"}], "context": {}, "expect": {"not_contains": ["來源", "**"], "numbers_in_data": true}}
+{"id": "kb-threshold", "messages": [{"role": "user", "content": "空站門檻是怎麼定的？"}], "context": {}, "expect": {"not_contains": ["來源", "**", "##"], "max_sentences": 6}}
+{"id": "kb-sop-hold", "messages": [{"role": "user", "content": "什麼情況下會暫時不派車？"}], "context": {}, "expect": {"not_contains": ["來源", "**"], "max_sentences": 6}}
+{"id": "kb-why-not-exact", "messages": [{"role": "user", "content": "為什麼建議的台數不是補到剛好？"}], "context": {}, "expect": {"not_contains": ["來源", "**"], "max_sentences": 6}}
+{"id": "noise-digits", "messages": [{"role": "user", "content": "123"}], "context": {}, "expect": {"contains": ["說清楚"], "not_contains": ["補車", "空站", "來源"]}}
+{"id": "noise-letters", "messages": [{"role": "user", "content": "asdfgh"}], "context": {}, "expect": {"contains": ["說清楚"], "not_contains": ["補車", "空站"]}}
+{"id": "off-scope-weather", "messages": [{"role": "user", "content": "今天台北會下雨嗎？"}], "context": {}, "expect": {"not_contains": ["建議補車", "空站數"]}}
+{"id": "typo-anchored", "messages": [{"role": "user", "content": "土城關誰"}], "context": {}, "expect": {"contains": ["土城"], "not_contains": ["來源", "**"], "numbers_in_data": true}}
+{"id": "too-long", "messages": [{"role": "user", "content": "請幫我非常詳細地分析整個新北市所有行政區的 YouBike 調度狀況並且逐站說明每一站的可借車輛數目前的風險等級以及建議補車或取車的台數還有預計越線的時間以及過去二十四小時的借還趨勢和明天每個小時的預測值我需要一份非常完整的書面報告完整涵蓋板橋三重新莊中和永和新店土城蘆洲汐止淡水樹林林口鶯歌三峽泰山五股八里深坑石碇坪林烏來金山萬里瑞芳貢寮雙溪平溪這所有的行政區謝謝你請務必幫我把每一個站點都完整列出來不要遺漏任何一個站也請一併附上每站的經緯度座標與所屬租借站編號還有最近一次資料更新的時間戳記以及該站這個月以來的妥善率統計我要拿這份報告去開會所以請盡量寫得詳細一點越完整越好內容多沒關係我會自己讀完全部另外也請補充說明每個行政區的車位總數尖峰離峰的週轉率還有這半年的成長趨勢以及跟去年同期相比的變化幅度我希望這份文件可以直接當成正式簡報的附件所以格式與用詞都請正式一點段落分明標題清楚謝謝你辛苦了拜託務必全部寫完不要中途省略"}], "context": {}, "expect": {"is_error": true, "contains": ["太長"]}}
+{"id": "station-detail", "messages": [{"role": "user", "content": "「捷運板橋站」現在狀況？"}], "context": {}, "expect": {"not_contains": ["來源", "**"], "numbers_in_data": true}}
+{"id": "count-high-risk", "messages": [{"role": "user", "content": "現在全市有幾個高風險站？"}], "context": {}, "expect": {"contains": ["高風險"], "not_contains": ["來源", "**"], "max_sentences": 3, "numbers_in_data": true}}
+{"id": "district-most-urgent", "messages": [{"role": "user", "content": "板橋最急的站是哪一個？"}], "context": {}, "expect": {"contains": ["板橋"], "not_contains": ["來源", "**"], "numbers_in_data": true}}
+{"id": "broaden-from-filtered", "messages": [{"role": "user", "content": "其他行政區呢？"}], "context": {"town_code": "18"}, "expect": {"contains": ["全市"], "not_contains": ["來源", "**", "未提供", "未顯示", "切換", "只有板橋"], "numbers_in_data": true}}
+{"id": "safe-stations", "messages": [{"role": "user", "content": "哪些站是安全的？"}], "context": {"town_code": "18"}, "expect": {"contains": ["健康"], "not_contains": ["來源", "**", "滿站是安全", "安全站的數量為滿站"], "numbers_in_data": true}}
+{"id": "sticky-scope-city", "messages": [{"role": "user", "content": "全市概況"}, {"role": "assistant", "content": "全市空站 424 站…"}, {"role": "user", "content": "哪些站要優先補車？"}], "context": {"town_code": "03"}, "expect": {"not_contains": ["來源", "**", "三重區目前"], "numbers_in_data": true}}
+{"id": "sticky-scope-district", "messages": [{"role": "user", "content": "三重區狀況如何"}, {"role": "assistant", "content": "三重區…"}, {"role": "user", "content": "哪些站要優先補車？"}], "context": {"town_code": "03"}, "expect": {"contains": ["三重"], "not_contains": ["來源", "**"], "numbers_in_data": true}}
+{"id": "list-full-stations", "messages": [{"role": "user", "content": "土城區有哪些滿站？"}], "context": {"town_code": "11"}, "expect": {"not_contains": ["來源", "**"], "list_items": 1}}
+{"id": "list-refill", "messages": [{"role": "user", "content": "板橋區哪些站要優先補車？"}], "context": {}, "expect": {"not_contains": ["來源", "**"], "list_items": 3, "max_sentences": 3}}
+{"id": "no-list-on-status", "messages": [{"role": "user", "content": "板橋區現在狀況如何？"}], "context": {}, "expect": {"no_list": true, "numbers_in_data": true}}
+{"id": "city-by-name", "messages": [{"role": "user", "content": "新北市目前概況"}], "context": {"town_code": "11", "station_uid": "NWT500211001"}, "expect": {"not_contains": ["來源", "**", "石門區：", "石門區目前"], "numbers_in_data": true}}
+{"id": "compare-table", "messages": [{"role": "user", "content": "比較板橋、三重、中和的調度狀況"}], "context": {}, "expect": {"not_contains": ["來源", "**"], "table_rows": 3, "max_sentences": 3}}
+{"id": "greeting", "messages": [{"role": "user", "content": "你好？"}], "context": {"town_code": "03"}, "expect": {"contains": ["調度助理"], "not_contains": ["來源", "**", "空站 4", "全市目前空站", "正在查看全市"], "no_list": true}}
+{"id": "stale-scope-not-inherited", "messages": [{"role": "user", "content": "全市概況"}, {"role": "assistant", "content": "…"}, {"role": "user", "content": "空站門檻怎麼定的"}, {"role": "assistant", "content": "…"}, {"role": "user", "content": "台數怎麼算的"}, {"role": "assistant", "content": "…"}, {"role": "user", "content": "中風險是什麼意思"}, {"role": "assistant", "content": "…"}, {"role": "user", "content": "哪些站要優先補車"}], "context": {"town_code": "03"}, "expect": {"not_contains": ["來源", "**", "全市目前", "全市待補", "全市・待補"], "numbers_in_data": true}}
+{"id": "named-district-beats-整體", "messages": [{"role": "user", "content": "板橋整體狀況？"}], "context": {"town_code": "03"}, "expect": {"contains": ["板橋"], "not_contains": ["來源", "**", "全市目前", "全市：空站"], "numbers_in_data": true}}
+
+
+
