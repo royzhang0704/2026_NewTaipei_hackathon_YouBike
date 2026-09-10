@@ -3,7 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from app import config
-from app.controller import predict_controller, station_controller
+from app.controller import assistant_controller, predict_controller, station_controller
 from app.repository import sys_config_repo as sc
 from app.errors import AppError
 
@@ -18,6 +18,7 @@ app.add_middleware(CORSMiddleware, allow_origins=["*"],
 
 app.include_router(station_controller.router, prefix="/api/v1")
 app.include_router(predict_controller.router, prefix="/api/v1")
+app.include_router(assistant_controller.router, prefix="/api/v1")
 
 
 @app.exception_handler(AppError)
