@@ -133,11 +133,13 @@ def strip_source_line(text: str) -> str:
 # ── 數字事後驗證 + 純模板降級 ────────────────────────────
 def unverified_numbers(answer: str, data: dict | None) -> list[str]:
     """答案出現、但資料包 JSON 裡找不到的數字（模型算錯 / 幻覺）。
-    只在意 >= 2 位數：個位數誤判率高、殺傷力低，且幾乎必然剛好出現在 JSON 某處。"""
+    只在意 >= 2 位數：個位數誤判率高、殺傷力低，且幾乎必然剛好出現在 JSON 某處。
+    先把千分位逗號拿掉（Nova 有時回「3,877」，會被切成 3 + 877 而誤判）。"""
     if not data:
         return []
     hay = json.dumps(data, ensure_ascii=False)
-    return [n for n in C.NUM_RE.findall(answer) if len(n) >= 2 and n not in hay]
+    clean = re.sub(r"(?<=\d)[,，](?=\d)", "", answer)
+    return [n for n in C.NUM_RE.findall(clean) if len(n) >= 2 and n not in hay]
 
 
 def templated_answer(data: dict | None) -> str:
