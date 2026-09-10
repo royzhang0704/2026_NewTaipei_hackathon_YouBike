@@ -9,6 +9,7 @@ __pycache__/
 
 logs/
 .cache/
+assistant_debug/
 
 .env
 .env.*
