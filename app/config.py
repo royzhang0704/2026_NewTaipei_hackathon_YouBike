@@ -18,22 +18,68 @@ load_dotenv(BASE_DIR / ".env", override=False)
 
 # ── AWS / endpoint ──
 REGION        = "ap-northeast-1"                              # ml-deepar/sm_train.py
-ENDPOINT_NAME = os.environ.get("ENDPOINT_NAME", "youbike-deepar-demo2604")
+ENDPOINT_NAME = os.environ.get("ENDPOINT_NAME", "youbike-deepar-d2604v2-r2")
 
 # ★ H 與 CONTEXT 寫死不從 meta.json 讀（8/28 教訓：cal_h6 那份 meta 是舊值
-#   cp 來的）。demo2604 的 meta 雖是新產的可信版，慣例照舊 ——
-#   以下數值抄自 ml-deepar/data/sm_experiments.csv 的 demo2604 列。
+#   cp 來的）。慣例照舊 —— 以下數值抄自
+#   ml-deepar/data/sm_experiments.csv 的 d2604v2-r2 列。
 H        = 6      # 一次吐 6 格 = 30min × 6 = 3 小時
 CONTEXT  = 48     # 過去 24 小時
 FREQ_MIN = 30
 
-# ★ q=0.19 是 H=4 校準出來的值；H=6 的逐格 q*_1~q*_6 尚未校準。
-#   預測愈遠不確定性愈大，6 格共用一個 q* 會系統性低估缺車，
-#   而且愈後面的格子低估愈多 —— 所以每個回應都要帶 CAVEATS。
-Q_LO, Q_MID, Q_HI = "0.19", "0.5", "0.9"
+# ⚠ CONTEXT = 48 讓模型效益打對折。實測（think-report/training/evaluation.md §4）：
+#   同一批序列、只改 context 長度，對 baseline 的改善是
+#     完整（≤1,200 格） 21.4%
+#     336 格（一週）    19.4%
+#     48 格（現值）     11.7%
+#   機制：DeepAR 對 30min 頻率的 lag 最遠取到約一週，48 格讓那些 lag 落空，
+#   預測系統性偏低（h6 平均 −2.14 台、大站 −3.35 台），而且完全沒有錯誤訊息。
+#   ⚠ 改成 336 要一起動：history_repo.tail()、calendar_repo.holiday_seq() 的
+#     長度、「不足 N 格歷史」的擋門（會擋掉更多新站），payload 0.02→0.11 MB/批，
+#     以及**重新校準 Q_LO**（336 格的 q* 是 0.14，不是 0.175）。
+
+# ★ 2026-09-10 校準（think-report/training/evaluation.md §6）：
+#   d2604v2-r2、context 48 格、2026-04 前半校準／後半驗證（按時間切，不隨機），
+#   目標覆蓋率 90%（cov = P(實際 >= 下界)）。
+#     擬合 q* = 0.175   套用時六格覆蓋 91.9 / 89.3 / 88.1 / 88.3 / 89.3 / 89.6
+#                       全落在 88~92 容忍帶內 → **逐格 q* 不值得做**
+#     採用 0.18        與 0.175 覆蓋率完全相同（都是 89.40%）——
+#                       100 個樣本下兩者內插到同一個界。取兩位小數是為了
+#                       不引入沒驗證過的三位小數 quantile 字串（endpoint 已刪，
+#                       無法實測），也與 calib_fit.py 自己印的建議一致。
+#     舊值 0.19        全體覆蓋 88.78%（略偏樂觀）
+#
+# ★★ 真正該分層的是**時段**，不是 horizon。逐窗 q*：
+#     早尖峰 06:30–09:00   0.115   ← 現行 0.19 只蓋 85.2%
+#     晚尖峰 15:30–18:00   0.145
+#     晚尖峰 18:30–21:00   0.145
+#     日間離峰 12:30–15:00  0.185
+#     晚離峰 21:30–00:00   0.255
+#     轉離峰 09:30–12:00   0.255
+#   全距 0.14，是逐 horizon（0.07）的兩倍。
+#   ⚠ **早尖峰是缺車最密的時段**（08:30 有 42.3% 的站在門檻下），
+#     卻也是下界最不準的時段 —— 缺車在最該抓的地方被漏掉。
+#   逐時段要改三處（Q_LO 改 map、送多組 quantiles、按時段取值），本次未做。
+#
+# ⚠ q* 綁 context 長度（336 格是 0.14）與時段組成，但**不綁隨機種子**
+#   —— 同組態的兩顆模型在相同窗上量到的 q* 完全一致（evaluation.md §6-3）。
+Q_LO, Q_MID, Q_HI = "0.18", "0.5", "0.9"
 NUM_SAMPLES = 100
 
-CAVEATS = ["q=0.19 為 H=4 校準值；H=6 逐格 q* 尚未校準，下界偏鬆，缺車會被低估"]
+# ★ 方向：cov = P(實際 >= 下界)。覆蓋率低於目標＝下界壓得不夠低＝
+#   缺車發生了卻沒被標記。舊版註解寫「下界偏鬆，缺車會被低估」，
+#   結論方向對，但沒說出時段差異 —— 而時段差異是 0.14 的全距。
+CAVEATS = ["q=0.18 為 d2604v2-r2 @ context 48 格的全時段校準值（目標覆蓋 90%，實測 89.4%）；"
+           "尖峰時段的 q* 更低（早尖峰 0.115），單一值在早尖峰覆蓋率僅 86.0%，"
+           "該時段的缺車可能被漏掉"]
+
+# ⚠⚠ 命名陷阱：下界的欄位名一路叫 `q19`（DB 欄位 forecast_history.q19、
+#   API 回應欄位、前端），那是 Q_LO = "0.19" 時代留下的字面值。
+#   Q_LO 現在是 0.18，**名稱已經與值不符**。
+#   沒有一起改名的理由：改名要動 DB 欄位 ＋ API 契約 ＋ 前端三層，
+#   而 endpoint_repo 是用 `q[config.Q_LO]` 動態索引，功能不受影響。
+#   ⇒ 讀 `q19` 時請以本檔的 Q_LO 為準。若之後做逐時段 q*，
+#     那次一起把欄位改成 `q_lo` 比較划算。
 
 # ── demo 回放模式（meet/20260831/計劃-demo回放模式與重訓.md §2）──
 #   sys_config 的 demo_t0_real / demo_t0_virtual 兩鍵有值即生效
@@ -61,11 +107,21 @@ PROXY_CAT_ENABLED = os.environ.get("PROXY_CAT_ENABLED", "1") == "1"
 
 # ── 模型卡（回應的 model 區塊）──
 # ★ demo 用模型：訓練集 2025-08-01 ~ 2026-03-31（回放 2026-05 時沒見過答案），
-#   test 為 2026-04 整月 119 原點。對照表 ml-deepar/data/sagemaker_demo2604/。
+#   test 為 2026-04 整月 179 原點、評分窗 06:30–00:00 無縫（排除無人調度的凌晨）。
+#   對照表 ml-deepar/data/sagemaker_demo2604_v2/。
+#
+# ★ 為什麼是 r2：同組態獨立重訓三次（r1 0.22153 / r2 0.22422 / r3 0.22567），
+#   全距 0.00414，統計上等價。r2 的分數最接近三輪平均 0.22381 ——
+#   部署那顆自己的成績與對外講的數字一致。挑最好的 r1 等於把種子的運氣
+#   算進模型的成績裡（think-report/training/evaluation.md §3）。
+#
+# ⚠ test_wql 不可與 demo2604 的 0.19688 並排 —— 那是覆蓋時段不同的考卷
+#   （舊考卷含凌晨、缺早尖峰）。可比的是「對 baseline 的相對改善」：
+#   舊考卷 12.6%，本考卷 **20.6%**。
 MODEL_INFO = {
-    "job": "youbike-deepar-demo2604-20260831-084604",
+    "job": "youbike-deepar-d2604v2-r2-20260910-152245",
     "H": H, "context": CONTEXT,
-    "test_wql": 0.19688, "test_rmse": 4.5235,
+    "test_wql": 0.22422, "test_rmse": 5.0417,
     "names_sha": "a14aff9be3e733bc",
 }
 
