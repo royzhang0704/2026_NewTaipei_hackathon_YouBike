@@ -1,34 +1,17 @@
-/* 調度助理的傳輸層：依 VITE_ASSISTANT_MODE 切換 mock 與 live。
-   UI 僅呼叫 sendChat()，不需知道回應來自內建邏輯或後端服務。 */
+/* 調度助理的傳輸層：呼叫後端 SSE 端點，把事件流轉成 ChatHandlers 回呼。
+   UI 僅呼叫 sendChat()。回應由後端組（即時查 DB 的 fast-path + AgentCore Harness）。 */
 
 import { getApiBase } from '@/api/client'
 import type { AssistantContext, ChatHandlers, ChatResult, WireMessage } from './types'
-import { mockChat, type MockSnapshot } from './mockBrain'
-
-const MODE = import.meta.env.VITE_ASSISTANT_MODE ?? 'mock'
-
-export function assistantMode(): 'mock' | 'live' {
-  return MODE === 'live' ? 'live' : 'mock'
-}
-
-export async function sendChat(
-  messages: WireMessage[],
-  context: AssistantContext,
-  snapshot: MockSnapshot,
-  handlers: ChatHandlers = {},
-): Promise<ChatResult> {
-  if (assistantMode() === 'live') return sendLive(messages, context, handlers)
-  return mockChat(messages, snapshot, handlers, context)
-}
 
 function endpoint(): string {
   return import.meta.env.VITE_ASSISTANT_URL || `${getApiBase()}/api/v1/assistant/chat`
 }
 
-async function sendLive(
+export async function sendChat(
   messages: WireMessage[],
   context: AssistantContext,
-  h: ChatHandlers,
+  h: ChatHandlers = {},
 ): Promise<ChatResult> {
   const res = await fetch(endpoint(), {
     method: 'POST',

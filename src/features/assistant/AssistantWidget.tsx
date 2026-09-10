@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useEventListener } from 'usehooks-ts'
 import {
   AlertTriangle,
@@ -12,7 +12,7 @@ import {
   Square,
   X,
 } from 'lucide-react'
-import { useAlerts, useHealth, useStations, useTowns } from '@/api/queries'
+import { useHealth, useStations } from '@/api/queries'
 import { useAppStore } from '@/stores/useAppStore'
 import { useAssistantStore } from '@/stores/useAssistantStore'
 import { mdhm } from '@/lib/format'
@@ -74,10 +74,8 @@ export function AssistantWidget() {
   const selectTown = useAppStore((s) => s.selectTown)
   const setTownQuiet = useAppStore((s) => s.setTownQuiet)
 
-  // 取全市資料（不套用目前篩選），使助理可回答任一行政區
-  const { data: alerts } = useAlerts({ limit: 1000 })
+  // stations 僅供點「開啟站點」按鈕時把 uid 換成站名；health 提供資料時刻
   const { data: stations } = useStations()
-  const { data: towns } = useTowns()
   const { data: health } = useHealth()
 
   const [messages, setMessages] = useState<ChatMessage[]>(loadThread)
@@ -172,11 +170,6 @@ export function AssistantWidget() {
   // 卸載時中止進行中的請求
   useEffect(() => () => abortRef.current?.abort(), [])
 
-  const snapshot = useMemo(
-    () => ({ alerts: alerts?.items ?? [], stations: stations ?? [], towns: towns ?? [], health }),
-    [alerts, stations, towns, health],
-  )
-
   const onScroll = () => {
     const el = listRef.current
     if (!el) return
@@ -202,7 +195,6 @@ export function AssistantWidget() {
       const res = await sendChat(
         wire,
         { town_code: townCode || null, station_uid: selectedUid, virtual_now: dataNow },
-        snapshot,
         {
           signal: ac.signal,
           // 減少動態偏好：不逐字更新，等收尾一次補上整段
@@ -227,12 +219,13 @@ export function AssistantWidget() {
         setAnnounce('已停止')
       } else {
         console.error('[assistant] runQuery failed:', e)
-        patchMsg(botId, () => ({
-          content: '查詢失敗，請重試。',
-          pending: false,
-          failed: true,
-        }))
-        setAnnounce('查詢失敗，請重試')
+        // 後端的 SSE error 事件會帶可讀訊息（繁中）；HTTP/網路錯誤（"assistant 500" 之類）則用罐頭字
+        const raw = e instanceof Error ? e.message : ''
+        const msg = raw && !/^assistant \d+$/.test(raw) && !/^Failed to fetch/i.test(raw)
+          ? raw
+          : '調度助理暫時無法回應，請稍後再試。'
+        patchMsg(botId, () => ({ content: msg, pending: false, failed: true }))
+        setAnnounce(msg)
       }
     } finally {
       setSending(false)
