@@ -15,7 +15,6 @@ import {
 import { useHealth, useStations } from '@/api/queries'
 import { useAppStore } from '@/stores/useAppStore'
 import { useAssistantStore } from '@/stores/useAssistantStore'
-import { mdhm } from '@/lib/format'
 import { segChip } from '@/components/ui/segChip'
 import { cn } from '@/lib/utils'
 import { sendChat } from './api'
@@ -23,9 +22,37 @@ import type { ChatMessage } from './types'
 
 const uid = () => Math.random().toString(36).slice(2, 10)
 const STORE_KEY = 'yb_assistant_thread'
+const TID_KEY = 'yb_assistant_thread_id'
 const MAX_KEEP = 50 // 持久化只留最近 N 則
 
-const SUGGESTIONS = ['現在有幾個高風險站？', '哪些站一小時內要補車？', '板橋區狀況如何？']
+// 每個對話一組 id：後端當 AgentCore runtimeSessionId（多輪記憶）。
+// 換新對話就 mint 新的 → 內容重複也不會撞進舊 session 的記憶。
+const newThreadId = () =>
+  (globalThis.crypto?.randomUUID?.() ?? `${uid()}${uid()}${uid()}${uid()}${uid()}`)
+
+function loadThreadId(): string {
+  try {
+    const v = localStorage.getItem(TID_KEY)
+    if (v && v.length >= 8) return v
+  } catch {
+    /* 隱私模式 → 用臨時 id */
+  }
+  const id = newThreadId()
+  try {
+    localStorage.setItem(TID_KEY, id)
+  } catch {
+    /* ignore */
+  }
+  return id
+}
+
+// 空白頁範例問句：依畫面目前選取的站／區套模板（不寫死，也不打 LLM）
+function suggestionsFor(townName: string | null, stationName: string | null): string[] {
+  if (stationName)
+    return [`「${stationName}」要不要補車？`, `「${stationName}」為什麼建議這個台數？`, '現在全市概況？']
+  if (townName) return [`${townName}該怎麼調度？`, `${townName}哪幾站最急？`, `${townName}幾站空站？`]
+  return ['現在有幾個高風險站？', '哪些站要優先補車？', '空站門檻怎麼定的？']
+}
 
 const greeting = (): ChatMessage => ({
   id: 'greeting',
@@ -58,6 +85,17 @@ function saveThread(ms: ChatMessage[]) {
 const clock = (at?: number) =>
   at ? new Date(at).toLocaleTimeString('zh-TW', { hour: '2-digit', minute: '2-digit', hour12: false }) : ''
 
+// 時間戳：demo 回放時顯示虛擬時鐘（"YYYY-MM-DD HH:MM:SS" → "HH:MM"），否則用真實時間
+const msgTime = (m: ChatMessage) =>
+  m.virtualAt && m.virtualAt.length >= 16 ? m.virtualAt.slice(11, 16) : clock(m.at)
+
+// 把（虛擬）時鐘字串 floor 到 30 分鐘批次界線："…13:49:52" → "…13:30"。
+// 回放與正式都適用：資料每 30 分換一批，時鐘跨界線＝換批＝該提示重問（不依賴 current_slot / tick）。
+const slotOf = (ts?: string | null): string | null => {
+  if (!ts || ts.length < 16) return null
+  return `${ts.slice(0, 14)}${Number(ts.slice(14, 16)) < 30 ? '00' : '30'}`
+}
+
 function isTyping() {
   const el = document.activeElement as HTMLElement | null
   return !!el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable)
@@ -79,6 +117,7 @@ export function AssistantWidget() {
   const { data: health } = useHealth()
 
   const [messages, setMessages] = useState<ChatMessage[]>(loadThread)
+  const [threadId, setThreadId] = useState<string>(loadThreadId)
   const [input, setInput] = useState('')
   const [sending, setSending] = useState(false)
   const [atBottom, setAtBottom] = useState(true)
@@ -107,8 +146,10 @@ export function AssistantWidget() {
     [],
   )
 
-  // 目前的資料時刻（虛擬時鐘）——回答時記在訊息上，之後比對是否過期
+  // 送給後端的「現在」用（虛擬）牆上時鐘；判斷答案是否過期用「批次界線」＝時鐘 floor 到 30 分。
+  // 每 30 分換一批，跨界線＝資料換了才提示重問；回放與正式皆適用，不依賴 current_slot / tick。
   const dataNow = health?.virtual_now ?? health?.now ?? null
+  const curSlot = slotOf(dataNow)
 
   // 持久化：串流期間逐 token 寫入 localStorage 過於頻繁，故 sending 時略過，收尾（sending 轉 false）再寫入一次
   useEffect(() => {
@@ -194,13 +235,20 @@ export function AssistantWidget() {
     try {
       const res = await sendChat(
         wire,
-        { town_code: townCode || null, station_uid: selectedUid, virtual_now: dataNow },
+        {
+          town_code: townCode || null,
+          station_uid: selectedUid,
+          virtual_now: dataNow,
+          thread_id: threadId,
+        },
         {
           signal: ac.signal,
           // 減少動態偏好：不逐字更新，等收尾一次補上整段
           onDelta: reduce ? undefined : (d) => patchMsg(botId, (m) => ({ content: m.content + d })),
           onSources: (s) => patchMsg(botId, () => ({ sources: s })),
           onActions: (a) => patchMsg(botId, () => ({ actions: a })),
+          onList: (l) => patchMsg(botId, () => ({ list: l })),
+          onTable: (t) => patchMsg(botId, () => ({ table: t })),
           onSuggestions: (s) => patchMsg(botId, () => ({ suggestions: s })),
         },
       )
@@ -208,6 +256,8 @@ export function AssistantWidget() {
         content: res.content || m.content || '（無回應）',
         sources: res.sources,
         actions: res.actions,
+        list: res.list,
+        table: res.table,
         suggestions: res.suggestions,
         pending: false,
         failed: false,
@@ -245,8 +295,8 @@ export function AssistantWidget() {
     const botId = uid()
     setMessages((ms) => [
       ...ms,
-      { id: uid(), role: 'user', content: q, at: now },
-      { id: botId, role: 'assistant', content: '', pending: true, at: now, query: q, dataAt: dataNow },
+      { id: uid(), role: 'user', content: q, at: now, virtualAt: dataNow },
+      { id: botId, role: 'assistant', content: '', pending: true, at: now, virtualAt: dataNow, query: q, dataAt: curSlot },
     ])
     runQuery([...prior, { role: 'user', content: q }], botId)
   }
@@ -262,7 +312,7 @@ export function AssistantWidget() {
       .slice(0, idx) // 該則之前的訊息（已含對應的使用者提問）
       .filter((m) => m.id !== 'greeting' && !m.failed && !m.pending)
       .map((m) => ({ role: m.role, content: m.content }))
-    patchMsg(id, () => ({ content: '', pending: true, failed: false, at: Date.now(), dataAt: dataNow }))
+    patchMsg(id, () => ({ content: '', pending: true, failed: false, at: Date.now(), virtualAt: dataNow, dataAt: curSlot }))
     runQuery(prior, id)
   }
 
@@ -276,8 +326,11 @@ export function AssistantWidget() {
     abortRef.current?.abort()
     setConfirmClear(false)
     setMessages([greeting()])
+    const nextId = newThreadId()
+    setThreadId(nextId)
     try {
       localStorage.removeItem(STORE_KEY)
+      localStorage.setItem(TID_KEY, nextId)
     } catch {
       /* ignore */
     }
@@ -300,7 +353,20 @@ export function AssistantWidget() {
     )
   }
 
+  // 選到某站（action 按鈕與清單列共用）：篩選範圍外的站先靜默切區，鏡頭交給選站的 flyTo
+  function openStation(uid: string) {
+    const st = stations?.find((s) => s.uid === uid)
+    if (st && townCode && st.town_code !== townCode) setTownQuiet(st.town_code)
+    selectStation(uid)
+  }
+
   const showSuggestions = messages.filter((m) => m.role === 'user').length === 0
+  // 空白頁範例：依畫面選取的區／站套模板
+  const townName = townCode ? (stations?.find((s) => s.town_code === townCode)?.town ?? null) : null
+  const openStationName = selectedUid
+    ? (stations?.find((s) => s.uid === selectedUid)?.name ?? null)
+    : null
+  const emptySuggestions = suggestionsFor(townName, openStationName)
   // 後續建議問題僅顯示於最後一則助理訊息下方；往上捲動歷史時不顯示
   const lastMsgId = messages[messages.length - 1]?.id
 
@@ -323,7 +389,7 @@ export function AssistantWidget() {
     <div
       role="dialog"
       aria-labelledby="assistant-title"
-      className="anim-panel drawer-float fixed bottom-[4.5rem] right-5 z-40 flex w-[min(380px,calc(100vw-2rem))] flex-col overflow-hidden rounded-sm border border-edge bg-float"
+      className="anim-panel drawer-float fixed bottom-[4.5rem] right-5 z-40 flex w-[min(440px,calc(100vw-2rem))] flex-col overflow-hidden rounded-sm border border-edge bg-float"
       style={{ height: 'min(560px, calc(100dvh - 11rem))' }}
     >
       <div className="phead flex-none">
@@ -394,7 +460,7 @@ export function AssistantWidget() {
                 <div className="max-w-full whitespace-pre-wrap rounded-sm rounded-br-xs border border-edge bg-raise px-3 py-2 text-[0.82rem] leading-[1.5] text-ink">
                   <span className="sr-only">你說：</span>
                   {m.content}
-                  <span className="sr-only">（{clock(m.at)}）</span>
+                  <span className="sr-only">（{msgTime(m)}）</span>
                 </div>
               </div>
             ) : (
@@ -439,23 +505,118 @@ export function AssistantWidget() {
                         )}
                       </p>
 
+                      {!!m.list?.items.length && (
+                        <div className="mt-2 overflow-hidden rounded-xs border border-hair">
+                          <div className="bg-raise px-2.5 py-1 text-[0.66rem] font-semibold tracking-[0.08em] text-ink3">
+                            {m.list.title}
+                            <span className="ml-1 text-ink3/70">· {m.list.items.length}</span>
+                          </div>
+                          <ul className="max-h-[240px] divide-y divide-hair overflow-y-auto">
+                            {m.list.items.map((it, i) => {
+                              const inner = (
+                                <>
+                                  <span className="min-w-0 flex-1 truncate text-ink">{it.name}</span>
+                                  {it.meta && (
+                                    <span className="flex-none tabular-nums text-[0.72rem] text-ink3">
+                                      {it.meta}
+                                    </span>
+                                  )}
+                                </>
+                              )
+                              return (
+                                <li key={i}>
+                                  {it.uid ? (
+                                    <button
+                                      type="button"
+                                      onClick={() => openStation(it.uid!)}
+                                      className="flex w-full items-center gap-2 px-2.5 py-[7px] text-left text-[0.78rem] hover:bg-hair"
+                                    >
+                                      {inner}
+                                    </button>
+                                  ) : (
+                                    <div className="flex items-center gap-2 px-2.5 py-[7px] text-[0.78rem]">
+                                      {inner}
+                                    </div>
+                                  )}
+                                </li>
+                              )
+                            })}
+                          </ul>
+                        </div>
+                      )}
+
+                      {!!m.table?.rows.length && (
+                        <div className="mt-2 overflow-hidden rounded-xs border border-hair">
+                          <div className="bg-raise px-2.5 py-1 text-[0.66rem] font-semibold tracking-[0.08em] text-ink3">
+                            {m.table.title}
+                          </div>
+                          <div className="overflow-x-auto">
+                            <table className="w-full border-collapse text-[0.74rem]">
+                              <thead>
+                                <tr className="text-ink3">
+                                  <th className="px-2 py-1 text-left font-medium" aria-label="行政區" />
+                                  {m.table.columns.map((c) => (
+                                    <th
+                                      key={c.key}
+                                      className={cn(
+                                        'whitespace-nowrap px-2 py-1 font-medium',
+                                        c.align === 'left' ? 'text-left' : 'text-right',
+                                      )}
+                                    >
+                                      {c.label}
+                                    </th>
+                                  ))}
+                                </tr>
+                              </thead>
+                              <tbody className="divide-y divide-hair">
+                                {m.table.rows.map((r, i) => (
+                                  <tr key={i} className={r.town ? 'hover:bg-hair' : undefined}>
+                                    <th
+                                      scope="row"
+                                      className="whitespace-nowrap px-2 py-1 text-left font-medium text-ink"
+                                    >
+                                      {r.town ? (
+                                        <button
+                                          type="button"
+                                          onClick={() => selectTown(r.town!)}
+                                          className="hover:underline"
+                                        >
+                                          {r.name}
+                                        </button>
+                                      ) : (
+                                        r.name
+                                      )}
+                                    </th>
+                                    {r.cells.map((cell, j) => (
+                                      <td
+                                        key={j}
+                                        className={cn(
+                                          'whitespace-nowrap px-2 py-1 text-ink2',
+                                          m.table!.columns[j]?.align === 'left'
+                                            ? 'text-left'
+                                            : 'text-right tabular-nums',
+                                        )}
+                                      >
+                                        {cell}
+                                      </td>
+                                    ))}
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
+                        </div>
+                      )}
+
                       {!!m.actions?.length && (
                         <div className="mt-2 flex flex-wrap gap-[6px]">
                           {m.actions.map((a, i) => (
                             <button
                               key={i}
                               type="button"
-                              onClick={() => {
-                                if (a.type === 'select_station') {
-                                  // 選到篩選範圍外的站 → 靜默把地區切到該站所屬區（遮罩 / chip 一致），
-                                  // 不重框地圖，鏡頭只由選站的 flyTo 帶過去
-                                  const st = stations?.find((s) => s.uid === a.value)
-                                  if (st && townCode && st.town_code !== townCode) setTownQuiet(st.town_code)
-                                  selectStation(a.value)
-                                } else {
-                                  selectTown(a.value)
-                                }
-                              }}
+                              onClick={() =>
+                                a.type === 'select_station' ? openStation(a.value) : selectTown(a.value)
+                              }
                               className={cn(
                                 segChip(false),
                                 'inline-flex min-h-[26px] items-center px-[9px] text-[0.72rem]',
@@ -513,12 +674,12 @@ export function AssistantWidget() {
                         </details>
                       )}
 
-                      {/* 資料過期時常駐顯示「以最新資料重問」提示（重要資訊，不隱藏於 hover） */}
+                      {/* 換了新批次資料才顯示「以最新資料重問」（比批次時刻，不比每秒在跳的虛擬時鐘） */}
                       {!m.pending &&
                         m.query &&
                         m.dataAt &&
-                        dataNow &&
-                        mdhm(m.dataAt) !== mdhm(dataNow) && (
+                        curSlot &&
+                        m.dataAt !== curSlot && (
                           <button
                             type="button"
                             onClick={() => send(m.query!)}
@@ -550,7 +711,7 @@ export function AssistantWidget() {
                             )}
                           </button>
                           <span aria-hidden className="tabular-nums">
-                            {clock(m.at)}
+                            {msgTime(m)}
                           </span>
                         </div>
                       )}
@@ -563,7 +724,7 @@ export function AssistantWidget() {
 
           {showSuggestions && (
             <div className="flex flex-col items-start gap-[6px] pl-8 pt-1">
-              {SUGGESTIONS.map((s) => (
+              {emptySuggestions.map((s) => (
                 <button
                   key={s}
                   type="button"

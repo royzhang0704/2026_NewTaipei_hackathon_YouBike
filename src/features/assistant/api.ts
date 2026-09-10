@@ -27,13 +27,24 @@ export async function sendChat(
       reply?: string
       sources?: ChatResult['sources']
       actions?: ChatResult['actions']
+      list?: ChatResult['list']
+      table?: ChatResult['table']
       suggestions?: ChatResult['suggestions']
     }
     if (j.sources) h.onSources?.(j.sources)
     if (j.actions) h.onActions?.(j.actions)
+    if (j.list) h.onList?.(j.list)
+    if (j.table) h.onTable?.(j.table)
     if (j.suggestions) h.onSuggestions?.(j.suggestions)
     if (j.reply) h.onDelta?.(j.reply)
-    return { content: j.reply ?? '', sources: j.sources, actions: j.actions, suggestions: j.suggestions }
+    return {
+      content: j.reply ?? '',
+      sources: j.sources,
+      actions: j.actions,
+      list: j.list,
+      table: j.table,
+      suggestions: j.suggestions,
+    }
   }
 
   if (!res.body) throw new Error('assistant: 無回應內容')
@@ -42,6 +53,8 @@ export async function sendChat(
   let content = ''
   let sources: ChatResult['sources']
   let actions: ChatResult['actions']
+  let list: ChatResult['list']
+  let table: ChatResult['table']
   let suggestions: ChatResult['suggestions']
 
   for (;;) {
@@ -53,7 +66,15 @@ export async function sendChat(
     for (const frame of frames) {
       const line = frame.split('\n').find((l) => l.startsWith('data:'))
       if (!line) continue
-      let ev: { type: string; text?: string; items?: unknown; message?: string }
+      let ev: {
+        type: string
+        text?: string
+        items?: unknown
+        title?: string
+        columns?: unknown
+        rows?: unknown
+        message?: string
+      }
       try {
         ev = JSON.parse(line.slice(5).trim())
       } catch {
@@ -68,6 +89,16 @@ export async function sendChat(
       } else if (ev.type === 'actions') {
         actions = ev.items as ChatResult['actions']
         if (actions) h.onActions?.(actions)
+      } else if (ev.type === 'list') {
+        list = { title: ev.title ?? '', items: (ev.items ?? []) as NonNullable<ChatResult['list']>['items'] }
+        h.onList?.(list)
+      } else if (ev.type === 'table') {
+        table = {
+          title: ev.title ?? '',
+          columns: (ev.columns ?? []) as NonNullable<ChatResult['table']>['columns'],
+          rows: (ev.rows ?? []) as NonNullable<ChatResult['table']>['rows'],
+        }
+        h.onTable?.(table)
       } else if (ev.type === 'suggestions') {
         suggestions = ev.items as ChatResult['suggestions']
         if (suggestions) h.onSuggestions?.(suggestions)
@@ -76,5 +107,5 @@ export async function sendChat(
       }
     }
   }
-  return { content, sources, actions, suggestions }
+  return { content, sources, actions, list, table, suggestions }
 }
