@@ -21,11 +21,17 @@
 {"id": "list-full-stations", "messages": [{"role": "user", "content": "土城區有哪些滿站？"}], "context": {"town_code": "11"}, "expect": {"not_contains": ["來源", "**"], "list_items": 1}}
 {"id": "list-refill", "messages": [{"role": "user", "content": "板橋區哪些站要優先補車？"}], "context": {}, "expect": {"not_contains": ["來源", "**"], "list_items": 3, "max_sentences": 3}}
 {"id": "no-list-on-status", "messages": [{"role": "user", "content": "板橋區現在狀況如何？"}], "context": {}, "expect": {"no_list": true, "numbers_in_data": true}}
+{"id": "no-list-on-single-station", "messages": [{"role": "user", "content": "「明德青和街口」要不要補車？"}], "context": {"town_code": "06"}, "expect": {"no_list": true, "not_contains": ["來源", "**"], "numbers_in_data": true}}
 {"id": "city-by-name", "messages": [{"role": "user", "content": "新北市目前概況"}], "context": {"town_code": "11", "station_uid": "NWT500211001"}, "expect": {"not_contains": ["來源", "**", "石門區：", "石門區目前"], "numbers_in_data": true}}
 {"id": "compare-table", "messages": [{"role": "user", "content": "比較板橋、三重、中和的調度狀況"}], "context": {}, "expect": {"not_contains": ["來源", "**"], "table_rows": 3, "max_sentences": 3}}
 {"id": "greeting", "messages": [{"role": "user", "content": "你好？"}], "context": {"town_code": "03"}, "expect": {"contains": ["調度助理"], "not_contains": ["來源", "**", "空站 4", "全市目前空站", "正在查看全市"], "no_list": true}}
 {"id": "stale-scope-not-inherited", "messages": [{"role": "user", "content": "全市概況"}, {"role": "assistant", "content": "…"}, {"role": "user", "content": "空站門檻怎麼定的"}, {"role": "assistant", "content": "…"}, {"role": "user", "content": "台數怎麼算的"}, {"role": "assistant", "content": "…"}, {"role": "user", "content": "中風險是什麼意思"}, {"role": "assistant", "content": "…"}, {"role": "user", "content": "哪些站要優先補車"}], "context": {"town_code": "03"}, "expect": {"not_contains": ["來源", "**", "全市目前", "全市待補", "全市・待補"], "numbers_in_data": true}}
 {"id": "named-district-beats-整體", "messages": [{"role": "user", "content": "板橋整體狀況？"}], "context": {"town_code": "03"}, "expect": {"contains": ["板橋"], "not_contains": ["來源", "**", "全市目前", "全市：空站"], "numbers_in_data": true}}
-
-
-
+{"id": "dispatch-source", "messages": [{"role": "user", "content": "明德青和街口的車要從哪邊調度過來？"}], "context": {"town_code": "06"}, "expect": {"not_contains": ["來源", "**"], "data_has": ["可調出候選", "直線距離"], "numbers_in_data": true}}
+{"id": "other-city-taipei", "messages": [{"role": "user", "content": "南港展覽館現況"}], "context": {"town_code": "06"}, "expect": {"contains": ["新北市"], "not_contains": ["來源", "**", "切換", "土城區的即時"], "no_list": true}}
+{"id": "not-off-scope-road-name", "messages": [{"role": "user", "content": "板橋南港路口現況"}], "context": {}, "expect": {"not_contains": ["不在服務範圍", "來源", "**"], "numbers_in_data": true}}
+{"id": "scope-compare", "messages": [{"role": "user", "content": "比較板橋和三重"}], "context": {}, "expect": {"scope_kind": "compare"}}
+{"id": "scope-district-by-整體", "messages": [{"role": "user", "content": "板橋整體狀況"}], "context": {"town_code": "03"}, "expect": {"scope_kind": "district", "contains": ["板橋"]}}
+{"id": "scope-city-by-新北市", "messages": [{"role": "user", "content": "新北市概況"}], "context": {"town_code": "03"}, "expect": {"scope_kind": "city"}}
+{"id": "scope-district-bare-followup", "messages": [{"role": "user", "content": "哪些站要優先補車"}], "context": {"town_code": "06"}, "expect": {"scope_kind": "district"}}
+{"id": "nt-station-not-off-scope", "messages": [{"role": "user", "content": "捷運七張站(1號出口)可以從那邊補車？"}], "context": {"town_code": "27", "station_uid": "NWT500227053"}, "expect": {"not_contains": ["不在服務範圍", "不在新北市", "來源", "**"], "data_has": ["站點"]}}

@@ -33,7 +33,7 @@ try:
 except Exception:  # python-dotenv 沒裝也無妨
     pass
 
-from app.service import assistant_service as A  # noqa: E402
+from app.service import assistant as A  # noqa: E402
 
 GOLDEN = os.path.join(os.path.dirname(os.path.abspath(__file__)), "golden.jsonl")
 _SENT_RE = re.compile(r"[。！？!?\n]+")
@@ -112,11 +112,11 @@ def _check(case: dict) -> list[str]:
 
     if exp.get("numbers_in_data") and out["text"] and not out["error"]:
         try:
-            data, _, _ = A._gather_context(q, A._effective_ctx(case["messages"], ctx))
+            data, _, _ = A.gather_context(q, A.effective_ctx(case["messages"], ctx))
         except Exception as e:  # noqa: BLE001
             data = None
             fails.append(f"_gather_context 例外：{type(e).__name__}: {e}")
-        bad = A._unverified_numbers(out["text"], data)
+        bad = A.unverified_numbers(out["text"], data)
         if bad:
             fails.append(f"答案數字不在資料包：{bad}")
 
@@ -130,6 +130,20 @@ def _check(case: dict) -> list[str]:
 
     if exp.get("no_list") and (out["list"] or out["table"]):
         fails.append(f"不該有清單/表格卻出現：{out['list_title']!r}")
+
+    for key in exp.get("data_has", []):
+        try:
+            data, _, _ = A.gather_context(q, A.effective_ctx(case["messages"], ctx))
+        except Exception:  # noqa: BLE001
+            data = {}
+        if key not in json.dumps(data or {}, ensure_ascii=False):
+            fails.append(f"資料包缺 {key!r}（keys: {list((data or {}).keys())}）")
+
+    # 純函式的意圖分類斷言（不打 Bedrock、不撈 alert_service）
+    if want_kind := exp.get("scope_kind"):
+        got = A.resolve_scope(q, A.effective_ctx(case["messages"], ctx)).kind
+        if got != want_kind:
+            fails.append(f"scope.kind = {got!r}，預期 {want_kind!r}")
 
     return fails
 

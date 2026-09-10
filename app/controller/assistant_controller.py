@@ -3,7 +3,7 @@ import json
 from fastapi import APIRouter, Request
 from fastapi.responses import StreamingResponse
 
-from app.service import assistant_service
+from app.service import assistant as assistant_service
 
 router = APIRouter()
 
