@@ -10,6 +10,7 @@
 # 執行（使用者自己跑）：
 #   cd backend && uv run python aws/deploy_endpoint.py
 # ════════════════════════════════════════════════════════════
+import os
 import time
 
 import boto3
@@ -17,15 +18,22 @@ import boto3
 REGION   = "ap-northeast-1"
 # ★ demo2604：訓練集只到 2026-03-31，demo 回放 2026-05 時模型沒見過答案。
 #   舊的 youbike-deepar-h6 Model/Config 物件仍在（不計費），名稱要錯開。
-JOB      = "youbike-deepar-demo2604-20260831-084604"
+#
+# ★ 以下四項可用環境變數覆寫，預設值就是 demo2604 那一組（行為不變）。
+#   為什麼要能覆寫：換一顆模型評估時，同時存在的 Model / Config / Endpoint
+#   名稱都必須錯開，手改四處容易漏改一處而把新權重掛到舊名字上 ——
+#   那正是 think-report/training/model-card.md §5-1① 那種「安靜地錯」。
+#   用法見 meet/20260910/AWS指令-訓練與端點.md §4。
+JOB      = os.environ.get("SM_JOB",      "youbike-deepar-demo2604-20260831-084604")
+MODEL    = os.environ.get("SM_MODEL",    "youbike-deepar-demo2604")
+CONFIG   = os.environ.get("SM_CONFIG",   MODEL + "-config")
+ENDPOINT = os.environ.get("SM_ENDPOINT", MODEL)
 IMAGE    = "633353088612.dkr.ecr.ap-northeast-1.amazonaws.com/forecasting-deepar:1"  # sm_train.py，六個 job 都用它跑完
-MODEL    = "youbike-deepar-demo2604"
-CONFIG   = "youbike-deepar-demo2604-config"
-ENDPOINT = "youbike-deepar-demo2604"
-INSTANCE = "ml.m5.large"   # 1,550 條序列 × 100 samples 用不到 c5.2xlarge；不夠再 update_endpoint
+INSTANCE = os.environ.get("SM_INSTANCE", "ml.m5.large")   # 1,550 條序列 × 100 samples 用不到 c5.2xlarge；不夠再 update_endpoint
 
 sm  = boto3.client("sagemaker", region_name=REGION)
 job = sm.describe_training_job(TrainingJobName=JOB)
+print(f"region         {REGION}")
 print(f"training job   {JOB}")
 print(f"model data     {job['ModelArtifacts']['S3ModelArtifacts']}")
 print(f"role           {job['RoleArn']}")
