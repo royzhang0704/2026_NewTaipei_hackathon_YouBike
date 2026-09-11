@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { parseServerTs } from '@/lib/format'
 
-/* 頭欄時鐘：每次 /healthz 回應時強制對時至後端的 now，其間以 setInterval 內插前推。
+/* 頭欄時鐘：每次 /api/v1/healthz 回應時強制對時至後端的 now，其間以 setInterval 內插前推。
    流速 = 連續兩次 now 差 / 真實時間差（後端會調 speed，故每輪重估）：
    - 突變（改速度 / 剛從停表恢復）→ 直接採用，不 EMA
    - 兩次 now 未變化 → 視為停表，speed = 0，畫面靜止

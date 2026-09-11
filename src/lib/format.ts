@@ -28,10 +28,10 @@ export function fmtClock(d: Date): string {
   return `${p2(d.getMonth() + 1)}/${p2(d.getDate())} ${p2(d.getHours())}:${p2(d.getMinutes())}:${p2(d.getSeconds())}`
 }
 
-/** /healthz 的 now 本身就是歷史時刻（離瀏覽器時鐘 > 30 分）= 走在回放 / 示範時間軸上。
+/** /api/v1/healthz 的 now 本身就是歷史時刻（離瀏覽器時鐘 > 30 分）= 走在回放 / 示範時間軸上。
  *  關鍵：真實環境即使排程掛掉，healthz 的 now 仍是當下（只有 current_slot 落後）；
  *  只有 demo 回放會讓 now 本身跑到過去。這個比較能乾淨區分「示範」與「真故障」。
- *  （/healthz 沒吐 is_demo 旗標，只能這樣推。30 分：遠大於時鐘偏差、遠小於數月的 demo。） */
+ *  （/api/v1/healthz 沒吐 is_demo 旗標，只能這樣推。30 分：遠大於時鐘偏差、遠小於數月的 demo。） */
 export function isHistoricalClock(nowStr: string | null | undefined): boolean {
   const d = parseServerTs(nowStr)
   return !!d && Math.abs(d.getTime() - Date.now()) > 30 * 60_000

@@ -8,7 +8,7 @@ YouBike 營運調度預測平台。**React 19 + Vite + TypeScript**。
 ```bash
 cd web
 npm install
-npm run dev            # http://localhost:5173，/api 與 /healthz 由 Vite proxy 轉到 127.0.0.1:8000
+npm run dev            # http://localhost:5173，/api 由 Vite proxy 轉到 127.0.0.1:8000
 npm run build          # tsc -b + vite build → dist/
 ```
 

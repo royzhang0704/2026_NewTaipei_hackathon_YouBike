@@ -1,5 +1,5 @@
 /* 後端回應型別 —— 依 FastAPI 實際回應手寫（OpenAPI 未宣告 response model）。
-   對照樣本：GET /healthz、/api/v1/towns、/api/v1/stations、
+   對照樣本：GET /api/v1/healthz、/api/v1/towns、/api/v1/stations、
              /api/v1/stations/{uid}/day、/api/v1/alerts */
 
 export interface Health {

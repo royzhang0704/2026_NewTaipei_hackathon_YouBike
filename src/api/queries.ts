@@ -16,7 +16,7 @@ const retryWhileError = (q: { state: { status: string } }) =>
 export function useHealth() {
   return useQuery({
     queryKey: qk.health,
-    queryFn: ({ signal }) => api<Health>('/healthz', { signal }),
+    queryFn: ({ signal }) => api<Health>('/api/v1/healthz', { signal }),
     // 短間隔：頭欄時鐘靠連續兩次 now 推算流速，後端調速度最多 8 秒就跟上
     refetchInterval: 8_000,
     staleTime: 6_000,
