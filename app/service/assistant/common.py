@@ -125,6 +125,10 @@ RULES = [
 _ROLE_PATH = Path(__file__).resolve().parents[3] / "kb" / "_harness_system_prompt.txt"
 SYSTEM_PROMPT = _ROLE_PATH.read_text(encoding="utf-8")
 
+# 比賽規則：Bedrock 請求需 < 1 RPS。預設開著（留 0.05 秒緩衝）；正式環境設 0 關閉。
+# 忘記設定的後果不對稱——比賽忘了開會違規，正式忘了關只是多等一點點，所以預設值選「開」。
+BEDROCK_MIN_INTERVAL = float(os.environ.get("ASSISTANT_BEDROCK_MIN_INTERVAL", "1.05"))
+
 # ── 串流 / 開發參數 ──────────────────────────────────────
 CHUNK = int(os.environ.get("ASSISTANT_CHUNK", "20"))
 # 預設「收齊再送」：答案完整生成完才做數字驗證 → 出糗數字不會先流到畫面。

@@ -8,6 +8,8 @@ import json
 import logging
 import os
 import re
+import threading
+import time
 from collections.abc import Iterator
 
 from . import common as C
@@ -67,6 +69,26 @@ _STREAM_ERRORS = (
     "throttlingException", "serviceUnavailableException",
 )
 
+# 比賽規則：Bedrock 請求需控制在 1 RPS 以下。整個後端只有 invoke_harness() 這一處會打
+# Bedrock，卡在這裡就涵蓋所有路徑（app 請求、eval/run.py）。用 threading.Lock 不用
+# asyncio.Lock——chat_events 是同步 generator，Starlette 的 StreamingResponse 會把它丟進
+# thread pool 執行，不同 HTTP 請求跑在不同 thread，asyncio.Lock 鎖不住跨 thread 的情況。
+# ASSISTANT_BEDROCK_MIN_INTERVAL=0（正式環境）可關閉；只保證「同一個 process 內」的間隔，
+# 不同 process／多 instance 同時打同一帳號仍可能疊加超過，見文件說明。
+_rate_lock = threading.Lock()
+_last_call_at = 0.0
+
+
+def _throttle() -> None:
+    global _last_call_at
+    if C.BEDROCK_MIN_INTERVAL <= 0:
+        return
+    with _rate_lock:
+        wait = _last_call_at + C.BEDROCK_MIN_INTERVAL - time.monotonic()
+        if wait > 0:
+            time.sleep(wait)
+        _last_call_at = time.monotonic()
+
 
 def _get_client():
     global _boto_client
@@ -85,6 +107,7 @@ def invoke_harness(system_text: str, user_text: str, session_id: str) -> Iterato
     system_text（角色/KB規則/12條規則）走 systemPrompt 參數，跟 user_text（資料包+問句）
     結構性分開送——systemPrompt 會覆蓋 Harness 資源在 console 存的預設，不會疊加。
     只送最新一則使用者訊息；多輪脈絡靠 runtimeSessionId（Harness 端 Memory 保存）。"""
+    _throttle()
     client = _get_client()
     resp = client.invoke_harness(
         harnessArn=os.environ["ASSISTANT_HARNESS_ARN"],
