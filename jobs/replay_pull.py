@@ -150,6 +150,42 @@ def copy_range(since: datetime | None, until: datetime) -> tuple[int, int]:
     return n_last, n_total
 
 
+def has_forecast(slot: datetime) -> bool:
+    """這一格是不是已經預測過（主檔有任何一站 done）。
+
+    看主檔不看 forecast_history：station 層的冪等判定也是以主檔為準，
+    兩邊用同一個事實來源，才不會出現「歷史表有列但主檔說沒跑過」的分歧。
+    """
+    with get_conn().cursor() as cur:
+        cur.execute("SELECT count(*) AS n FROM hackathon_backend_forecast_run "
+                    "WHERE origin = %s AND predict_status = 'done'", (slot,))
+        return cur.fetchone()["n"] > 0
+
+
+def maybe_slow_down(slot: datetime) -> None:
+    """demo_auto_slow：走到第一個「要現算」的格，就把時鐘降回 tail 速度。
+
+    ★ demo_until 標的是「當下」不是「slot 的 origin」——
+      標 origin 會讓 effective_now 往回跳（時鐘倒退，前端會看到時間回捲）。
+      標當下則是連續的：real_at_until 反推出來剛好是此刻。
+
+    ★ 只在 demo_until 還沒設過時動手。降速後這個鍵就有值了，
+      之後每一格都會走到這裡但什麼都不做 —— 降速是一次性的狀態轉換。
+    """
+    if not sys_config_repo.auto_slow():
+        return
+    if sys_config_repo.get_ts(sys_config_repo.K_DEMO_UNTIL) is not None:
+        return                                  # 已經降過速
+    if has_forecast(slot):
+        return                                  # 這格有預測，快轉通過
+    if sys_config_repo.tail_speed() <= 0:
+        sys_config_repo.set(sys_config_repo.K_DEMO_TAIL_SPEED, "1")
+    now = sys_config_repo.effective_now()
+    sys_config_repo.set(sys_config_repo.K_DEMO_UNTIL, now)
+    print(f"── ⏬ origin={slot} 沒有預測過（要現算）"
+          f"→ 時鐘自 {now} 起降為 ×{sys_config_repo.tail_speed():g}")
+
+
 def run(slot: datetime, trigger: bool = True,
         since: datetime | None = None) -> tuple[bool, str]:
     """跑一輪 Job A′。介面對齊 pull_realtime.run —— tick 兩邊可互換。
@@ -184,6 +220,7 @@ def run(slot: datetime, trigger: bool = True,
         print(f"✓ Job A′ success（stations_ok={n_grid}）")
 
         if trigger:
+            maybe_slow_down(slot)
             print(f"── 觸發 Job B（origin={slot}）")
             from jobs import batch_predict
             try:

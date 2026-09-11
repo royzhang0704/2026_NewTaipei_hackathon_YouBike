@@ -127,6 +127,8 @@ def status() -> int:
     mode = ("靜態 virtual_now（時鐘不走！）" if sc.is_virtual()
             else f"demo 回放（×{config.DEMO_SPEED:g}）⏸ 已到終點，時鐘停表中"
                  if sc.demo_ended()
+            else f"demo 回放 ▶▶ 已過終點，續走中（×{sc.tail_speed():g}）"
+                 if sc.demo_tailing()
             else f"demo 回放（×{config.DEMO_SPEED:g}）" if sc.is_demo()
             else "真實時間（demo 未啟動）")
     print(f"模式       {mode}")
