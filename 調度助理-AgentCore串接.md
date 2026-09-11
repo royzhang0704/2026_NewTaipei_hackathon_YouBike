@@ -181,37 +181,76 @@ proxy 不給 LLM 工具權限，而是**把查好的資料寫成文字，當使�
 region 重建，或需要理解整條串接關係時參考。console 按鈕位置可能隨 AWS 改版跑動，抓「順序跟依賴關係」
 比抓「按鈕在哪」重要。
 
-1. **S3 bucket**（放 KB 來源文件）：S3 → Create bucket → `imsoft-ubike-agentcore-kb`（region 選
-   `ap-northeast-1`）。建好後把 `backend/kb/01~04-*.md` 上傳進去（`_harness_system_prompt.txt`
-   **不要**上傳，那是 Harness 的 system prompt，不是 KB 內容）。
-2. **Managed Knowledge Base**：Bedrock console → Knowledge Bases → Create → **Knowledge Base with
-   vector store**。取名 `imsoft-ubike-agentcore-kb`，IAM 角色選「自動建立新角色」（讓 console 自己
-   生成有權限讀那個 S3 bucket 的 service role），Data source 選 **Amazon S3**、指到步驟 1 的 bucket，
-   embedding model 用預設即可。建立完成後會拿到一個 KB ID（`RFL4TON1NT`）。
-3. **Sync KB data source**：進剛建好的 KB → 底下的 data source（`imsoft-ubike-agentcore-kb-src`）→
-   按 **Sync**，等它把 S3 裡的 md 文件切塊、產生 embedding、寫進 vector store。之後每次改了
-   `backend/kb/*.md` 都要回來重做「上傳 + Sync」這兩步，KB 才會反映新內容。
-4. **AgentCore Gateway**：Bedrock AgentCore console → Gateway → Create → 取名
-   `imsoft-ubike-agentcore-gateway`。Gateway 對外用標準 MCP 協定，本身不含任何工具，工具要靠底下的
-   Target 掛上去。
-5. **Gateway target（KB connector）**：進剛建的 Gateway → Targets → Add target → target type 選
-   **Knowledge Base**（AWS 提供的 pre-built target type，不用自己寫 Lambda）→ 選步驟 2 的 KB ID →
-   Outbound Auth 選一個有權限呼叫 `bedrock:Retrieve` 的角色 → 取名
-   `imsoft-ubike-agentcore-kb-target`。掛上去之後，這個 KB 會自動變成兩個 MCP 工具：`Retrieve`
-   （單次語意搜尋，回相關段落＋出處）跟 `AgenticRetrieveStream`（多輪迭代檢索＋摘要）；Harness 平常
-   用的是前者。
-6. **Harness**：Bedrock AgentCore console → Harness → **Quick create Harness**，取名
-   `imsoft_ubike_agentcore_harness`（建立後名稱不能改）。設定：
-   - **Model**：選 Amazon Nova 2 Lite（`jp.amazon.nova-2-lite-v1:0`）
-   - **System prompt**：先用預設值即可，內容之後會被程式呼叫時傳的 `systemPrompt` 參數覆蓋
-     （見「一、這是什麼」的說明），console 這欄只在手動用 Playground 測試時才有意義
-   - **Tools / Gateway**：把步驟 4 建的 Gateway 掛上去，讓 Harness 能呼叫 `Kb-Target Retrieve`
-     這個工具
-   - 建好之後到 Harness 詳細頁複製 **Harness ARN**，填進 `backend/.env` 的
-     `ASSISTANT_HARNESS_ARN`（見「四、填 backend/.env」）
-7. **驗證串起來了**：在 Harness 的 Playground 問一句 KB 範圍的問題（例如「調度台數為什麼不是補到
-   剛好脫離紅區」），確認它有呼叫 `Kb-Target Retrieve`、回答有引用到 `02`／`03` 文件——這代表
-   Gateway → Target → KB 這條路徑通了。
+**1. S3 bucket**（放 KB 來源文件）
+- S3 console → **Create bucket**
+- Bucket name：`imsoft-ubike-agentcore-kb`
+- AWS Region：**亞太地區（東京）ap-northeast-1**
+- 其餘保持預設（Block Public Access 維持開啟、不用開版本控制）→ **Create bucket**
+- 進去該 bucket → **Upload** → 選 `backend/kb/01-*.md` ~ `04-*.md` 四個檔案上傳
+  （`_harness_system_prompt.txt` **不要**上傳，那是 Harness 的 system prompt，不是 KB 內容）
+
+**2. Managed Knowledge Base**
+- Bedrock console 左側選單 → **Knowledge Bases** → Create 下拉 → **Knowledge Base with vector store**
+- Name：`imsoft-ubike-agentcore-kb`
+- IAM permissions：選 **Create and use a new service role**（讓 console 自動生成一個有權限讀
+  步驟 1 那個 S3 bucket 的 service role，不用自己手刻 policy）
+- Data source：選 **Amazon S3**
+  - Data source name：`imsoft-ubike-agentcore-kb-src`
+  - S3 URI：瀏覽選到步驟 1 的 bucket（`s3://imsoft-ubike-agentcore-kb/`）
+  - Chunking and parsing configurations：選 **Default**（固定大小切塊，四份文件不大，預設夠用）
+- Embeddings model：選 **Titan Text Embeddings V2**（console 通常標示為預設/建議選項）
+- Vector store：選 **Quick create a new vector store**（底層是 Amazon OpenSearch Serverless，
+  console 自動建 collection/index，不用自己另外去 OpenSearch Serverless 開）
+- **Create Knowledge Base**，等建立完成，記下產生的 **KB ID**（`RFL4TON1NT`）
+- Model access：如果建立過程卡在「沒有 Titan Text Embeddings V2 存取權」，先去 Bedrock console →
+  **Model access** 頁面申請開通該 embedding model（跟申請 Nova 2 Lite 模型存取是同一個地方）
+
+**3. Sync KB data source**
+- 進剛建好的 KB → 底下的 Data source 區塊（`imsoft-ubike-agentcore-kb-src`）→ 勾選它 → **Sync**
+- 等狀態從 Syncing 變成 Available，代表 S3 裡的 md 文件已切塊、產生 embedding、寫進 vector store
+- 之後每次改了 `backend/kb/*.md`，都要回來重做「上傳到 S3 → 這裡按 Sync」這兩步，KB 才會反映新內容
+
+**4. AgentCore Gateway**
+- Bedrock AgentCore console → **Gateway** → **Create**
+- Name：`imsoft-ubike-agentcore-gateway`
+- Inbound auth（Gateway 被外部呼叫時怎麼驗證身分，這欄必填）：選
+  **Quick create configuration with Cognito**——讓 console 自動幫你建一組 Cognito user pool 當
+  驗證伺服器，不用自己手動接第三方 IdP
+- IAM role：選 **Create and use a new service role**
+- **Create gateway**
+
+**5. Gateway target（KB connector）**
+- 進剛建的 Gateway 詳細頁 → **Targets** → **Add target**
+- Target type：**Knowledge Base**（AWS 內建的 pre-built target type，不用自己寫 Lambda 轉接）
+- Name：`imsoft-ubike-agentcore-kb-target`
+- 選步驟 2 的 KB（下拉選 `imsoft-ubike-agentcore-kb` / KB ID `RFL4TON1NT`）
+- Outbound Auth（Gateway 代替你去呼叫 KB 的 `Retrieve` API 時要用的身分）：選
+  **Create and use a new service role**（自動生成一個有 `bedrock:Retrieve` 權限的角色）
+- **Create target**——建完後這個 target 會自動掛出兩個 MCP 工具：`Retrieve`（單次語意搜尋，
+  回相關段落＋出處，Harness 平常用這個）跟 `AgenticRetrieveStream`（多輪迭代檢索＋摘要）
+
+**6. Harness**
+- Bedrock AgentCore console → **Harness** → **Quick create Harness**
+- Name：`imsoft_ubike_agentcore_harness`（**建立後名稱不能改**，先想好）
+- Model：下拉選 **Amazon Nova 2 Lite**（region 是東京，對應 model ID
+  `jp.amazon.nova-2-lite-v1:0`；如果列表沒有這個選項，一樣先去 **Model access** 頁面申請開通）
+- System prompt：這欄先貼什麼都行（可以直接貼 `backend/kb/_harness_system_prompt.txt` 的內容，
+  方便之後手動在 Playground 測試時行為一致）——正式運作時這欄的內容**每次都會被程式呼叫時傳的
+  `systemPrompt` 參數蓋過**（見「一、這是什麼」的說明），不影響 app 實際行為
+- Tools：**Add** → 選 **Gateway** → 選步驟 4 建的 `imsoft-ubike-agentcore-gateway`，讓 Harness
+  能呼叫到 `Kb-Target Retrieve` 這個工具
+- **Create harness**，進詳細頁複製 **Harness ARN**，填進 `backend/.env` 的
+  `ASSISTANT_HARNESS_ARN`（見「四、填 backend/.env」）
+
+**7. 驗證串起來了**
+- 在 Harness 詳細頁的 **Playground** 分頁，問一句 KB 範圍的問題（例如「調度台數為什麼不是補到
+  剛好脫離紅區」）
+- 確認回覆過程中有呼叫 `Kb-Target Retrieve`（Playground 通常會顯示工具呼叫的中間過程），
+  答案內容對得上 `02`／`03` 文件——代表 Gateway → Target → KB 這條路徑通了
+
+> 以上欄位是依 AgentCore 官方文件現在的操作流程寫的，但 console 版面偶爾會調整用詞／欄位位置，
+> 實際操作時如果某個選項名稱對不上，抓「這步在做什麼（例如：指定驗證方式 / 指定要讀哪個 S3）」
+> 去 console 上找對應欄位，順序跟依賴關係不會變。
 
 參考文件：[Create an AgentCore gateway](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/gateway-create-console.html)、
 [Managed Knowledge Base as Gateway target](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/gateway-target-connector-managed-kb.html)、
