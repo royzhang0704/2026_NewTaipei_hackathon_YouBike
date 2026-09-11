@@ -54,7 +54,7 @@ def build_agent_prompt(q: str, ctx: dict, data: dict | None, panel: dict | None 
             f"目前即時調度資料（{vnow or '現在'}）：",
             json.dumps(data, ensure_ascii=False),
         ]
-    parts += ["", f"使用者問：{q_for_llm}", "", "回答要求：" + "".join(C.RULES)]
+    parts += ["", f"使用者問：{q_for_llm}"]
     return "\n".join(parts)
 
 
@@ -78,13 +78,16 @@ def _get_client():
     return _boto_client
 
 
-def invoke_harness(user_text: str, session_id: str) -> Iterator[dict]:
+def invoke_harness(system_text: str, user_text: str, session_id: str) -> Iterator[dict]:
     """呼叫 AgentCore Harness（client.invoke_harness），把 Converse 串流轉成 SSE 事件。
+    system_text（角色/KB規則/12條規則）走 systemPrompt 參數，跟 user_text（資料包+問句）
+    結構性分開送——systemPrompt 會覆蓋 Harness 資源在 console 存的預設，不會疊加。
     只送最新一則使用者訊息；多輪脈絡靠 runtimeSessionId（Harness 端 Memory 保存）。"""
     client = _get_client()
     resp = client.invoke_harness(
         harnessArn=os.environ["ASSISTANT_HARNESS_ARN"],
         runtimeSessionId=session_id,
+        systemPrompt=[{"text": system_text}],
         messages=[{"role": "user", "content": [{"text": user_text or "（無內容）"}]}],
     )
     for event in resp.get("stream", []):
@@ -170,7 +173,7 @@ def templated_answer(data: dict | None) -> str:
 
 
 # ── 除錯 dump ────────────────────────────────────────────
-def dump_debug(q: str, ctx: dict, prompt: str, sid: str, data: dict | None,
+def dump_debug(q: str, ctx: dict, system_text: str, prompt: str, sid: str, data: dict | None,
                panel: dict | None, nova_raw: str, bad: list, final: str) -> None:
     """把一次請求的完整內幕寫成一個檔（只在 ASSISTANT_DEBUG_DUMP 有設時）。"""
     if not C.DEBUG_DIR:
@@ -187,7 +190,10 @@ def dump_debug(q: str, ctx: dict, prompt: str, sid: str, data: dict | None,
                 f"effective_ctx : {json.dumps(ctx, ensure_ascii=False)}",
                 f"question      : {q}",
                 "",
-                "--- 送給 Harness 的 messages[0].content（整段 prompt）---",
+                "--- systemPrompt（角色/KB規則/12條規則，覆蓋 console 預設）---",
+                system_text,
+                "",
+                "--- 送給 Harness 的 messages[0].content（資料包 + 問句）---",
                 prompt,
                 "",
                 "--- data 資料包（pretty）---",

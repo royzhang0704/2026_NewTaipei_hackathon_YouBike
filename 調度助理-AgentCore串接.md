@@ -36,29 +36,70 @@
 ### 一次請求實際走的路（LLM vs 程式）
 
 **正常情況下，答案那段文字是 Nova（Bedrock Harness）寫的。** 這支程式碼負責「餵給它什麼」和
-「檢查它吐什麼」，不自己寫答案。`chat_events()` 流程：
+「檢查它吐什麼」，不自己寫答案。`events.chat_events()` 流程（函式名已對應拆包後的 package，
+`scope.*` / `datapkg.*` / `llm.*` 前綴是模組）：
 
 ```
 chat_events(messages, ctx)
- ├─ _last_user() + 長度上限（> 400 字）─────── 超過 → error                 ← 不打 LLM
- ├─ _is_noise(q)? ─────────────────────────── 是 → 死字串「看不太懂…」+ chip  ← 不打 LLM
- ├─ _GREETING_RE 命中（你好 / hi / 謝謝…）? ── 是 → 死字串自我介紹 + chip     ← 不打 LLM、不撈資料
- ├─ _OTHER_CITY_RE 命中且問句沒點到新北的區/站? 是 → 「不在新北市範圍」+ chip    ← 不打 LLM
+ ├─ scope.last_user() + 長度上限（> 400 字）── 超過 → error                  ← 不打 LLM
+ ├─ scope.is_noise(q)? ────────────────────── 是 → 死字串「看不太懂…」+ chip  ← 不打 LLM
+ ├─ GREETING_RE 命中（你好 / hi / 謝謝…）? ─── 是 → 死字串自我介紹 + chip     ← 不打 LLM、不撈資料
+ ├─ OTHER_CITY_RE 命中且問句沒點到新北的區/站? 是 → 「不在新北市範圍」+ chip    ← 不打 LLM
  ├─ 沒有 ASSISTANT_HARNESS_ARN? ───────────── 是 → error / 服務範圍說明        ← 不打 LLM（正式環境不會發生）
- ├─ _effective_ctx(messages, ctx) ·········· 範圍延續：這句沒帶範圍就沿用「最近 3 句內」最近指定的（純邏輯）
- ├─ _gather_context(q, ctx) ················ 查 DB（alert_service）組資料包 JSON + 按鈕 + panel（清單/表格）  ← 不打 LLM，只撈數字
- ├─ _build_agent_prompt(q, ctx, data, panel)  把「資料包 + 問句 + 十來條規則」拼成一段文字
- ├─ _invoke_harness(prompt, sid) ─────────────────────────────────────────  ★ 這裡才打 Bedrock / Nova
+ ├─ scope.effective_ctx(messages, ctx) ······ 範圍延續：這句沒帶範圍就沿用「最近 3 句內」最近指定的（純邏輯）
+ ├─ datapkg.gather_context(q, ctx) ·········· 查 DB（alert_service）組資料包 JSON + 按鈕 + panel（清單/表格）  ← 不打 LLM，只撈數字
+ │      └─ 內部先呼叫 resolve_scope(q, ctx) 決定 kind（compare / district / city），
+ │         再 dispatch 到對應 `_pkg_*` 分支撈資料、`_attach_station`/`_attach_donors` 補站點與調度來源
+ ├─ llm.build_agent_prompt(q, ctx, data, panel)  把「資料包 + 問句 + 十來條規則」拼成一段文字
+ ├─ llm.invoke_harness(prompt, sid) ────────────────────────────────────  ★ 這裡才打 Bedrock / Nova
  │      └─ Nova 讀資料包、聽懂問題、挑重點、寫出人話回答（＋清單/比較題只寫 1～2 句總結）
- ├─ _strip_source_line() ··················· 切掉 Nova 自己加的「來源：<檔名>」
- ├─ _unverified_numbers(answer, data) ······ 答案裡 ≥2 位數的數字若不在資料包 → 丟掉整段 Nova 答案
- │      └─ 改用 _templated_answer(data)                                      ← 退回死模板（應該很少）
- ├─ _tail(): {type:list|table}（清單/比較表）+ {type:actions}（按鈕）+ {type:suggestions}（追問 chip）  ← 永遠是程式組的
- └─ except（Bedrock throttle / 5xx / 憑證錯）→ _templated_answer() 或 error   ← 降級才用死模板
+ ├─ llm.strip_source_line() ················· 切掉 Nova 自己加的「來源：<檔名>」
+ ├─ llm.unverified_numbers(answer, data) ···· 答案裡 ≥2 位數的數字若不在資料包 → 丟掉整段 Nova 答案
+ │      └─ 改用 llm.templated_answer(data)                                    ← 退回死模板（應該很少）
+ ├─ _tail(): {type:list|table}（清單/比較表）+ {type:actions}（按鈕）+ {type:suggestions}（追問 chip，`_followups`）  ← 永遠是程式組的
+ └─ except（Bedrock throttle / 5xx / 憑證錯）→ llm.templated_answer() 或 error   ← 降級才用死模板
 ```
 
-預設 `_STREAM_LIVE=False`（收齊再送）：整段生成完才驗證數字，出糗數字不會先流到畫面。
+預設 `STREAM_LIVE=False`（收齊再送）：整段生成完才驗證數字，出糗數字不會先流到畫面。
 設 `ASSISTANT_STREAM=1` 可切回逐字串流（此時數字問題只記 log、不攔）。
+
+**各階段的實際判斷細節（不只是「有沒有打 LLM」，還有「怎麼判斷」）：**
+
+- **`resolve_scope` 的範圍判斷是三層關鍵字強度**，不是單一 regex：
+  - `strong`（各區 / 其他行政區 / 全市）：不管有沒有點名區、有沒有 `ctx.town_code`，一律當全市——
+    這一層解決「其他行政區呢？」被誤判成某個舊區的 bug。
+  - `whole`（新北市 / 全新北）：只要問句裡沒有同時點名一個區，就當全市——解決「新北市目前概況」
+    被 `ctx.town_code` 劫走、答成篩選中的舊區的 bug。
+  - `weak`（整體 / 全部 / 所有）：只有「沒點名任何區」且「`ctx.town_code` 也沒設」才當全市，
+    否則視為在問目前正看的那一區——解決「板橋站整體狀況？」被 `weak` 關鍵字誤判成全市的 bug。
+- **`_attach_station` 的 panel 抑制**：`_build_list()`（清單/表格 panel）只在「沒有解出單一站點」時才組，
+  且要放在 `_attach_station` 之後才判斷——早期版本先組 panel 導致「捷運海山站要不要補車？」
+  的「補車」二字誤命中清單題 regex，答非所問地跳出整個土城區的表格。
+- **`find_station` 的模糊比對**：先找「完整站名」在問句裡的精確子字串命中（贏者全拿），
+  只有完全沒有精確命中時才退而比對「問句片段」（如「1號出口」）在站名裡的命中，
+  且用「命中片段長度」而非「站名長度」排序——否則「捷運七張站(1號出口)」會被
+  「1號出口」這個泛用片段誤導到別的、名字更長的站。
+- **`_attach_donors`（調度來源）的兩道防線**：
+  1. 距離上限 `ASSISTANT_DONOR_MAX_KM`（預設 5 km，haversine 直線距離）——避免建議一個 12.7 km
+     外的滿站當調出點；超過範圍就退化成「建議由調度中心備用車補入」。
+  2. Coverage-walk：依距離近到遠累加候選站的 `可調出上限`，一旦累加量 ≥ 目標站的「建議補 N 台」
+     就停止並截斷候選清單——保證「文字建議提到幾站」跟「下方調出按鈕給幾顆 chip」永遠一致，
+     不會出現「文字寫兩站、按鈕給三顆」的落差。累加仍不足時另外標注「尚缺 N 台建議調度中心補入」。
+- **`unverified_numbers` 的千分位逗號**：Nova 偶爾把「3877」寫成「3,877」，若直接用 `\d+` 抓數字
+  會被逗號切成 "3" + "877" 兩段，"877" 不會逐字出現在 JSON 資料包裡（資料包裡是連續的 "3877"），
+  因而被誤判成幻覺數字、觸發不必要的模板降級。修法是驗證前先用
+  `re.sub(r"(?<=\d)[,，](?=\d)", "", answer)` 把千分位逗號拿掉再比對，同時 prompt 規則②
+  也明講「不要加千分位逗號」從源頭減少發生。
+- **「其他行政區呢？」的雙層修法**：範圍判斷本身（見上面 `strong` 那層）先保證撈到的是全市資料，
+  但即使資料對了，Nova 2 Lite 仍會被問句裡「其他」兩個字卡住、回「其他區未提供」。
+  `build_agent_prompt` 因此在偵測到「已判定看全市 + 問句含『其他/其餘/別的…』之類的擴大詞」時，
+  把送給模型的**問句文字本身**正規化成「現在全市整體概況如何？」（如果去掉擴大詞後幾乎沒剩其他內容），
+  從根本上避免模型看到觸發詞。同時把追問 chip 本身也從「其他行政區呢？」改成「看全市整體概況」，
+  讓最常見的路徑一開始就不會撞到這個陷阱。
+- **按鈕的組成順序**：`gather_context` 最後把按鈕分成「切換行政區」（最多 1 顆，問的區跟目前畫面不同才給）
+  和「開啟站點」（`select_station`，依序去重，最多 `donor_cap` 顆——沒有調度來源時預設 3，
+  有調度來源建議時會擴大成 `1 + len(donor_buttons)`，讓「本站」+ 全部調出候選站都能點開）；
+  有清單/表格 panel 時則不再重複給站點 chip（清單本身已經可點）。
 
 | 使用者看到的東西 | 誰產生 |
 |---|---|

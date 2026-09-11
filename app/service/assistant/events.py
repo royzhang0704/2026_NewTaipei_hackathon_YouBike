@@ -88,7 +88,7 @@ def chat_events(messages: list[dict], ctx: dict) -> Iterator[dict]:
     try:
         if C.STREAM_LIVE:
             buf: list[str] = []
-            for ev in llm.invoke_harness(prompt, sid):
+            for ev in llm.invoke_harness(C.SYSTEM_PROMPT, prompt, sid):
                 if ev.get("type") == "delta":
                     buf.append(ev["text"])
                     yield ev
@@ -98,7 +98,7 @@ def chat_events(messages: list[dict], ctx: dict) -> Iterator[dict]:
             if bad:
                 _log.warning("number check failed (stream mode, not blocked): %s", bad)
         else:
-            nova_raw = "".join(ev["text"] for ev in llm.invoke_harness(prompt, sid)
+            nova_raw = "".join(ev["text"] for ev in llm.invoke_harness(C.SYSTEM_PROMPT, prompt, sid)
                                if ev.get("type") == "delta")
             answer = llm.strip_source_line(nova_raw).strip()
             bad = llm.unverified_numbers(answer, data)
@@ -108,12 +108,12 @@ def chat_events(messages: list[dict], ctx: dict) -> Iterator[dict]:
             final = answer or llm.templated_answer(data) or C.UNAVAILABLE_MSG
             for c in C.chunks(final):
                 yield {"type": "delta", "text": c}
-        llm.dump_debug(q, ctx, prompt, sid, data, panel, nova_raw, bad, final)
+        llm.dump_debug(q, ctx, C.SYSTEM_PROMPT, prompt, sid, data, panel, nova_raw, bad, final)
         yield from _tail()
     except Exception:  # noqa: BLE001 —— 任何失敗都轉成可讀輸出，不讓前端看到 stack
         _log.exception("invoke_harness failed")
         tmpl = llm.templated_answer(data)
-        llm.dump_debug(q, ctx, prompt, sid, data, panel, nova_raw, ["<exception>"],
+        llm.dump_debug(q, ctx, C.SYSTEM_PROMPT, prompt, sid, data, panel, nova_raw, ["<exception>"],
                        (tmpl + "（降級）") if tmpl else "<error>")
         if tmpl:  # graceful degradation：Bedrock 掛了還是給得出樸素但正確的現況
             for c in C.chunks(tmpl + "（調度助理暫時無法回應，以上為系統即時摘要）"):

@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import os
 import re
+from pathlib import Path
 
 # ── 文字對照 ──────────────────────────────────────────────
 LV_WORD = {"high": "高風險", "mid": "中風險", "low": "低風險", "none": "無風險"}
@@ -108,6 +109,12 @@ RULES = [
     "不要硬套目前行政區的資料、不要叫使用者切換行政區。",
     "繁體中文。",
 ]
+
+# ── system prompt（透過 Harness invoke 時的 systemPrompt 參數送出，覆蓋 console 預設）──
+# 靜態角色/KB 行為/風格寫在 kb/_harness_system_prompt.txt（純文字、好讀、好改，一樣受 git 版控）；
+# 這裡只負責接上比較常異動的 12 條規則。改動任一邊都要重跑 eval/run.py。
+_ROLE_PATH = Path(__file__).resolve().parents[3] / "kb" / "_harness_system_prompt.txt"
+SYSTEM_PROMPT = _ROLE_PATH.read_text(encoding="utf-8") + "\n回答要求：\n" + "".join(RULES)
 
 # ── 串流 / 開發參數 ──────────────────────────────────────
 CHUNK = int(os.environ.get("ASSISTANT_CHUNK", "20"))
