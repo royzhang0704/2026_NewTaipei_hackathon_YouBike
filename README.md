@@ -142,7 +142,7 @@ T = max(2, int(0.15 × 車柱 + 0.5))     # 不封頂，99 柱大站 T = 15
 
 | 方法 | 路徑 | 說明 |
 |---|---|---|
-| GET | `/healthz` | 系統時間、endpoint 名、排程開關、資料進度 |
+| GET | `/api/v1/healthz` | 系統時間、endpoint 名、排程開關、資料進度 |
 | GET | `/api/v1/towns` | 29 個行政區與站數 |
 | GET | `/api/v1/stations[?town_code=18]` | 站表（全量 1,538 站約 330 KB，前端開頁抓一次） |
 | GET | `/api/v1/stations/{uid}` | 單站基本資料 |
@@ -198,7 +198,7 @@ uv run python aws/deploy_endpoint.py
 
 # 3. 起服務（DB 參數全對齊 app/config.py 預設，不用設環境變數）
 uv run uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
-curl -s http://127.0.0.1:8000/healthz | python3 -m json.tool
+curl -s http://127.0.0.1:8000/api/v1/healthz | python3 -m json.tool
 
 # 4. 排程
 crontab jobs/crontab.txt        # 或：while true; do bash jobs/run_job.sh tick; sleep 60; done
@@ -254,9 +254,9 @@ tick 一律走 Job A′（從 baseline_grid 逐格搬）—— 2026-09-04 起這
 ```
 backend/
 ├── app/
-│   ├── main.py              FastAPI 進入點 + /healthz
+│   ├── main.py              FastAPI 進入點（router 註冊、CORS、錯誤處理）
 │   ├── config.py            ★ 常數集中地，每個值都註明來源
-│   ├── controller/          路由層（station / predict）
+│   ├── controller/          路由層（station / predict / assistant / health）
 │   ├── service/             業務層（overview 風險判定／predict payload／station）
 │   ├── repository/          資料層（每張表一支）
 │   └── schema/              Pydantic DTO

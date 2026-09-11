@@ -22,7 +22,7 @@ DEMO_SPEED=30 uv run uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
 pkill -f "uvicorn app.main:app"
 
 # 確認活著（demo 模式時 now 會是虛擬時間）
-curl -s http://127.0.0.1:8000/healthz | python3 -m json.tool
+curl -s http://127.0.0.1:8000/api/v1/healthz | python3 -m json.tool
 ```
 
 ⚠️ `--reset` 是 `jobs.demo` 的參數，**不是 uvicorn 的**。
@@ -31,7 +31,7 @@ curl -s http://127.0.0.1:8000/healthz | python3 -m json.tool
 
 | 方法 | 路徑 | 說明 |
 |---|---|---|
-| GET | `/healthz` | 系統時間、endpoint 名、排程開關、資料進度 |
+| GET | `/api/v1/healthz` | 系統時間、endpoint 名、排程開關、資料進度 |
 | GET | `/api/v1/towns` | 29 個行政區與站數 |
 | GET | `/api/v1/stations` | 全量站表（1,538 站，約 330 KB） |
 | GET | `/api/v1/stations?town_code=18` | 限單一行政區 |
@@ -109,7 +109,7 @@ uv run python -m app.repository.sys_config_repo --set scheduler_on 1           #
 export DEMO_SPEED=30 && while true; do bash jobs/run_job.sh tick; sleep 60; done   # ⑥
 ```
 
-④ 的值 = 最末 origin + 6 格（30 分一格）。不設的話 `/healthz` 的
+④ 的值 = 最末 origin + 6 格（30 分一格）。不設的話 `/api/v1/healthz` 的
 `forecast_left_min` 會是 null。
 
 到終點後 `--status` 的模式那行會變成 `⏸ 已到終點，時鐘停表中`，

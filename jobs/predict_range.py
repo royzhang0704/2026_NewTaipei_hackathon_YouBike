@@ -22,7 +22,7 @@
 #
 # ★ forecast_end 會被還原：batch_predict.run() 每輪都會把 sys_config 的
 #   forecast_end 設成該 origin + 3 小時。補 5 月的歷史時那是往回寫，
-#   會讓 /healthz 的 forecast_left_min 變成大負數。迴圈結束（含中斷、
+#   會讓 /api/v1/healthz 的 forecast_left_min 變成大負數。迴圈結束（含中斷、
 #   例外）一律把原值放回去。--dry-run 不會動它。
 #
 # ⚠ 真 endpoint 按秒計費（ml.m5.large）。48 個 origin × ~1,527 站 ÷ 50
