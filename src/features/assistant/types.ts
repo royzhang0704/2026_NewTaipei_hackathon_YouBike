@@ -93,6 +93,9 @@ export interface AssistantContext {
   virtual_now: string | null
   /** 每個對話一組（前端 mint、換新對話就換）——後端拿去當 AgentCore runtimeSessionId */
   thread_id?: string
+  /** true＝這次的 town_code/station_uid 是這輪才因使用者操作（切篩選／開站）變動的——
+      後端據此優先信任這份 ctx，不被對話延續（上一句提過的區）蓋過去。平常不用帶。 */
+  scope_just_changed?: boolean
 }
 
 /** mock 與 live（SSE）共用的串流回呼 */

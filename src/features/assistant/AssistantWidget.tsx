@@ -135,6 +135,9 @@ export function AssistantWidget() {
   const wasOpen = useRef(false)
   const stickRef = useRef(true) // 使用者是否黏在底部（決定要不要自動捲）
   const messagesRef = useRef(messages)
+  // 上一次「實際送出去給後端」的畫面範圍——送下一則之前跟目前 townCode/selectedUid 比對，
+  // 不同就代表這輪是使用者剛切過篩選／開過站，要在 ctx 帶 scope_just_changed（見 send()）
+  const lastScopeRef = useRef<{ town: string | null; station: string | null } | null>(null)
 
   useEffect(() => {
     messagesRef.current = messages
@@ -232,14 +235,20 @@ export function AssistantWidget() {
     const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches
     const ac = new AbortController()
     abortRef.current = ac
+    const scope = { town: townCode || null, station: selectedUid }
+    const scopeJustChanged =
+      !!lastScopeRef.current &&
+      (lastScopeRef.current.town !== scope.town || lastScopeRef.current.station !== scope.station)
+    lastScopeRef.current = scope
     try {
       const res = await sendChat(
         wire,
         {
-          town_code: townCode || null,
-          station_uid: selectedUid,
+          town_code: scope.town,
+          station_uid: scope.station,
           virtual_now: dataNow,
           thread_id: threadId,
+          scope_just_changed: scopeJustChanged,
         },
         {
           signal: ac.signal,
