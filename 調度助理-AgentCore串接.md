@@ -210,9 +210,16 @@ AWS_REGION=ap-northeast-1
 AWS_ACCESS_KEY_ID=<步驟三的>
 AWS_SECRET_ACCESS_KEY=<步驟三的>
 ASSISTANT_HARNESS_ARN=arn:aws:bedrock-agentcore:ap-northeast-1:597671487936:harness/imsoft_ubike_agentcore_harness-ZBEN5wmyW5
+# 比賽規則：Bedrock 請求需 < 1 RPS。不設這行＝用預設值 1.05（節流開著，安全預設）。
+# 正式環境 / 比賽結束後想拿掉人為限制 → 明確設成 0。
+ASSISTANT_BEDROCK_MIN_INTERVAL=1.05
 ```
 
 KEY / SECRET 填步驟三的。`.env` 已被 `.gitignore` 擋，不會進版控。
+
+`ASSISTANT_BEDROCK_MIN_INTERVAL` 這行**不是 AWS 端要設定的東西**，純粹是後端自己的節流器（`llm._throttle()`）；
+沒有對應的 AWS console 步驟，只有這個環境變數。部署到 AWS 上時，改成在部署設定（AgentCore Runtime /
+ECS task definition 之類，看實際怎麼部署）裡設同名環境變數，語意一樣：不設或設正數＝節流開著，設 `0`＝關閉。
 
 ---
 
@@ -277,6 +284,7 @@ DEMO_SPEED=60 uv run uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
 | 三層城市關鍵字 | strong（各區/其他行政區/全市）一律全市；whole（新北市）沒點名區才全市；weak（整體/全部/所有）沒點名區也沒在篩區才全市 | `_CITY_*_RE` |
 | 除錯 dump | `ASSISTANT_DEBUG_DUMP=1` → 每題寫一個檔（prompt + 資料包 + Nova 原始回覆 + 驗證 + 最終輸出） | `_dump_debug` |
 | 回歸測試 | `eval/` 黃金題庫 27 題，改 prompt / 換模型後 `.venv/bin/python eval/run.py` | `backend/eval/` |
+| Bedrock 請求節流 | 同一 process 內，打 Bedrock 的請求間隔 ≥ `ASSISTANT_BEDROCK_MIN_INTERVAL` 秒（預設 1.05）——比賽規則需求，正式環境設 0 關閉 | `llm._throttle()` |
 
 ### 已知限制
 
@@ -290,6 +298,9 @@ DEMO_SPEED=60 uv run uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
   掉回畫面篩選的區。純打招呼（`_GREETING_RE`）直接回自我介紹，不套範圍、不撈資料。
 - 城市關鍵字分三層強度（見上表）：「板橋整體狀況」的「整體」會讓步給「板橋」→ 回板橋，不是全市。
 - 之後若想改成「LLM 自己驅動撈資料（tool calling）」，設計與取捨見 `../調度助理-v2-架構參考.md`（目前決定不動）。
+- Bedrock 請求節流只保證「同一個 process 內」的間隔 —— 不同 process／多 instance 同時打同一 AWS 帳號，
+  各自都合規但加起來理論上仍可能超過 1 RPS；真要跨 process 硬保證需要分散式節流（Redis token bucket 之類），
+  目前規模用「口頭約定不要同時多處打同一帳號」代替。
 
 ---
 
@@ -299,6 +310,8 @@ DEMO_SPEED=60 uv run uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
 
 - 後端 proxy 帶著 IAM role（或 `.env` 憑證）即可，`invoke_harness` 走網路呼叫，跟後端在哪區無關。
 - 前端分網域部署時設 `VITE_ASSISTANT_URL=<後端網址>/api/v1/assistant/chat`。
+- **把 `ASSISTANT_BEDROCK_MIN_INTERVAL` 設成 `0`**——比賽期間 1 RPS 的人為限制拿掉，改吃 Bedrock
+  帳號本身的真實配額；流量大就買 Provisioned Throughput，不要再靠這個 sleep-based 節流器。
 - 進階：把 `/alerts`、`/stations/{uid}/day` 用 Gateway 的 REST/OpenAPI target 掛成 Harness 的工具，即時問答也交給 Agent（需要後端有對外 URL）。目前即時那半在 proxy 內處理，不需要這步。
 
 ---
