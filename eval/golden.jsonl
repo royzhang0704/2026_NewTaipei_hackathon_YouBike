@@ -35,3 +35,4 @@
 {"id": "scope-city-by-新北市", "messages": [{"role": "user", "content": "新北市概況"}], "context": {"town_code": "03"}, "expect": {"scope_kind": "city"}}
 {"id": "scope-district-bare-followup", "messages": [{"role": "user", "content": "哪些站要優先補車"}], "context": {"town_code": "06"}, "expect": {"scope_kind": "district"}}
 {"id": "nt-station-not-off-scope", "messages": [{"role": "user", "content": "捷運七張站(1號出口)可以從那邊補車？"}], "context": {"town_code": "27", "station_uid": "NWT500227053"}, "expect": {"not_contains": ["不在服務範圍", "不在新北市", "來源", "**"], "data_has": ["站點"]}}
+{"id": "no-false-claim-map-switched", "messages": [{"role": "user", "content": "地圖可以切到新店區嗎？"}], "context": {"town_code": "29", "station_uid": "NWT500229126"}, "expect": {"not_contains": ["已經切換", "你現在看到的是", "系統已經幫你切"], "data_has": ["行政區"]}}

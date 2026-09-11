@@ -12,9 +12,27 @@ import threading
 import time
 from collections.abc import Iterator
 
+from app.repository import station_repo
+
 from . import common as C
 
 _log = logging.getLogger("assistant")
+
+
+def _actual_view(ctx: dict) -> str:
+    """畫面『實際』顯示什麼——從 ctx（前端真正在看的站/區）算，不是這題問句解析出來的範圍。
+    兩者常常不同（問別區狀態時本來就是），差別只在於：這裡講的是事實，looking 是這題資料對應的範圍。"""
+    uid = ctx.get("station_uid")
+    if uid:
+        st = station_repo.find(uid)
+        if st:
+            return f"站點「{st['station_name']}」（{st['town']}）"
+    code = ctx.get("town_code")
+    if code:
+        for t in station_repo.towns():
+            if t.get("town_code") == code:
+                return t["town"]
+    return "全市"
 
 
 # ── prompt ───────────────────────────────────────────────
@@ -27,7 +45,12 @@ def build_agent_prompt(q: str, ctx: dict, data: dict | None, panel: dict | None 
         looking = data["行政區"]["name"]
     else:
         looking = "全市"
-    parts = [f"使用者目前正在看：{looking}。"]
+    actual = _actual_view(ctx)
+    parts = [f"畫面目前顯示：{actual}。"]
+    if looking not in actual and actual not in looking:
+        # 這題資料的範圍跟畫面實際顯示的不一樣（例如問了別區 / 問「能不能切換」）——
+        # 規則⑬會擋住「已經切換」這種話，這裡只要老實講資料對應哪個範圍。
+        parts.append(f"使用者問的是「{looking}」的資料（下面已附上）。")
     if panel and panel["type"] == "list":
         parts.append(
             f"（畫面會另外用清單顯示「{panel['title']}」共 {len(panel['items'])} 站，含站名與台數，"
