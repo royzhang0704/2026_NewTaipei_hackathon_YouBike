@@ -54,7 +54,9 @@ def build_agent_prompt(q: str, ctx: dict, data: dict | None, panel: dict | None 
             f"目前即時調度資料（{vnow or '現在'}）：",
             json.dumps(data, ensure_ascii=False),
         ]
-    parts += ["", f"使用者問：{q_for_llm}"]
+    # RULES 刻意留在這裡（user message 尾巴，緊接生成點之前），不併進 common.SYSTEM_PROMPT——
+    # 實測 Nova 2 Lite 對「離生成點較遠」的規則遵循度會下降，見 common.py 的說明。
+    parts += ["", f"使用者問：{q_for_llm}", "", "回答要求：" + "".join(C.RULES)]
     return "\n".join(parts)
 
 

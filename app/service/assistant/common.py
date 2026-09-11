@@ -111,10 +111,19 @@ RULES = [
 ]
 
 # ── system prompt（透過 Harness invoke 時的 systemPrompt 參數送出，覆蓋 console 預設）──
-# 靜態角色/KB 行為/風格寫在 kb/_harness_system_prompt.txt（純文字、好讀、好改，一樣受 git 版控）；
-# 這裡只負責接上比較常異動的 12 條規則。改動任一邊都要重跑 eval/run.py。
+# 只放「角色定位 / KB 使用規則 / 離題應對 / 風格」這種靜態描述（kb/_harness_system_prompt.txt，
+# 純文字、好讀、好改，一樣受 git 版控）。
+#
+# 實測發現（見 commit log）：RULES 這 12 條格式/行為規則若也搬進 systemPrompt，Nova 2 Lite 的
+# 遵循度會明顯下降（規則①「不要用 Markdown」直接被無視、自己生出一堆 **粗體**／條列標題）——
+# 弱模型對「離生成點較遠」的指令遵循度較差。三種組合 A/B 測試過：
+#   全部規則進 systemPrompt        → 會出現 Markdown 長文
+#   全部規則留在 user message 尾巴  → 3～5 句樸素文字（原本行為）
+#   只有角色/KB 進 systemPrompt，規則留在 user message 尾巴 → 一樣是樸素文字
+# 所以 RULES 刻意「不」併進這裡，繼續由 build_agent_prompt() 接在 user message 最後——
+# 這是有實測依據的取捨，不要因為想要「更乾淨」就把它們搬過來。
 _ROLE_PATH = Path(__file__).resolve().parents[3] / "kb" / "_harness_system_prompt.txt"
-SYSTEM_PROMPT = _ROLE_PATH.read_text(encoding="utf-8") + "\n回答要求：\n" + "".join(RULES)
+SYSTEM_PROMPT = _ROLE_PATH.read_text(encoding="utf-8")
 
 # ── 串流 / 開發參數 ──────────────────────────────────────
 CHUNK = int(os.environ.get("ASSISTANT_CHUNK", "20"))
