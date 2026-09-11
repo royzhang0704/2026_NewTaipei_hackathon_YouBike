@@ -100,6 +100,15 @@ chat_events(messages, ctx)
   和「開啟站點」（`select_station`，依序去重，最多 `donor_cap` 顆——沒有調度來源時預設 3，
   有調度來源建議時會擴大成 `1 + len(donor_buttons)`，讓「本站」+ 全部調出候選站都能點開）；
   有清單/表格 panel 時則不再重複給站點 chip（清單本身已經可點）。
+- **`RULES` 為什麼留在 user message 尾巴、不併進 `systemPrompt`**：Harness 的 `invoke_harness` API
+  有獨立的 `systemPrompt` 參數，理論上該把「角色定位」跟「12 條回答規則」都搬過去、跟每次都不同的
+  資料包+問句分開送，比較乾淨。實測發現：Nova 2 Lite 對「離生成點較遠」的指令遵循度會明顯下降——
+  規則搬進 `systemPrompt` 後，規則①「不要用 Markdown」直接被無視，問「這個畫面怎麼閱讀？」這類問題
+  會生出長篇 `**粗體**`／條列標題的說明，而不是原本 3～5 句樸素文字。A/B 測過三種組合鎖定原因：
+  規則全進 systemPrompt → 長文；規則全留 user 尾巴 → 正常；只角色/KB 進 systemPrompt、規則留
+  user 尾巴 → 正常。所以現在是：`common.SYSTEM_PROMPT`（走 `systemPrompt` 參數）只放角色定位/KB
+  行為（`kb/_harness_system_prompt.txt`），`RULES` 12 條繼續由 `build_agent_prompt()` 接在
+  user message 最後——這是有實測依據的取捨，不要因為想要「架構更乾淨」就把它們搬回去。
 
 | 使用者看到的東西 | 誰產生 |
 |---|---|
