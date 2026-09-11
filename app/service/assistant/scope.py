@@ -99,10 +99,16 @@ def sticky_scope(messages: list[dict], current_q: str, towns: list[dict]) -> tup
 
 def effective_ctx(messages: list[dict], ctx: dict) -> dict:
     """把「範圍延續」套進 ctx：當前問句沒帶範圍時，改用對話裡最近一次指定的範圍，
-    而不是一律掉回畫面篩選的那一區。chat_events 與 eval 共用，確保資料包一致。"""
+    而不是一律掉回畫面篩選的那一區。chat_events 與 eval 共用，確保資料包一致。
+
+    ctx.scope_just_changed（前端這輪主動帶的旗標）優先於對話延續 —— 使用者剛切換篩選 /
+    開新站時，這份 ctx 才是「畫面現在真的顯示什麼」的事實，不該被對話記憶蓋過去。
+    沒有這個旗標（沒動過畫面）時，行為跟以前一樣，靠 sticky_scope 補位。"""
     ctx = ctx or {}
     q = last_user(messages)
     if not q:
+        return ctx
+    if ctx.get("scope_just_changed"):
         return ctx
     try:
         towns = station_repo.towns()
