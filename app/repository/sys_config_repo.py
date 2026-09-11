@@ -27,6 +27,11 @@ K_DEMO_T0_VIRTUAL = "demo_t0_virtual"  # demo 啟動時的虛擬起點（2026-05
 # 9/1 新增：讓回放能「只搬資料、跑到某一刻就停」，全程不碰 endpoint
 K_DEMO_UNTIL = "demo_until"            # 虛擬時鐘終點；到點停表（空 = 一路跑下去）
 K_REPLAY_PREDICT = "replay_predict"    # 回放要不要觸發 Job B（0 = 不打 endpoint）
+# 9/11 新增：走到 demo_until 之後不停表，改用這個倍率續走（0／未設 = 停表，原行為）
+K_DEMO_TAIL_SPEED = "demo_tail_speed"
+# 9/11 新增：已預測過的格快轉通過，一走到「要現算」的格就把 demo_until 標在當下
+#   → 時鐘自動降為 tail 速度。人不必事先算終點落在哪一格。
+K_DEMO_AUTO_SLOW = "demo_auto_slow"
 
 _TS = "%Y-%m-%d %H:%M:%S"
 
@@ -84,6 +89,9 @@ def effective_now() -> datetime:
            這是 8/28 踩過的坑，所以 demo 用 offset 制）
       ③ 都沒有 → 真實台北時間
 
+    ②走到 demo_until 之後分兩種（9/11）：demo_tail_speed = 0／未設 → 停表；
+    > 0 → 以該倍率續走（前段快轉看完，後段接著跑並持續產生新預測）。
+
     回台北 naive datetime。★ 所有 job 與 API 都該問這支，
     不要各自呼叫 datetime.now()。
     """
@@ -94,12 +102,22 @@ def effective_now() -> datetime:
     if t0r is not None and t0v is not None:
         real = datetime.now(TZ).replace(tzinfo=None)
         v = t0v + (real - t0r) * config.DEMO_SPEED
-        # ★ demo_until 夾在這裡而不是夾在 tick 的判定：只改一處，
-        #   tick 兩條判定、healthz 的 now/data_age 全都跟著一起停，
+        # ★ demo_until 在這裡處理而不是在 tick 的判定：只改一處，
+        #   tick 兩條判定、healthz 的 now/data_age 全都跟著一致，
         #   不會出現「時鐘走過頭但資料停住」的兩套現在。
-        #   到點後 expected == latest，tick 每輪安靜離開 = 卡在那裡。
         until = get_ts(K_DEMO_UNTIL)
-        return min(v, until) if until is not None else v
+        if until is not None and v > until:
+            tail = tail_speed()
+            # tail = 0：停表（9/1 起的原行為）。到點後 expected == latest，
+            # tick 每輪安靜離開 = 卡在那裡，這是「純重播、放完就停」要的。
+            if tail <= 0:
+                return until
+            # tail > 0：到點後改用 tail 倍率續走。
+            # ★ 到點對應的真實時刻用反推，不另存一個鍵 —— 不必在到點那一刻
+            #   有人（或某支程序）去記錄，重啟、換容器都算得出同一個值。
+            real_at_until = t0r + (until - t0v) / config.DEMO_SPEED
+            return until + (real - real_at_until) * tail
+        return v
     return datetime.now(TZ).replace(tzinfo=None)
 
 
@@ -127,10 +145,49 @@ def replay_predict() -> bool:
     return True if v is None else v.strip() not in ("0", "false", "off", "no")
 
 
-def demo_ended() -> bool:
-    """demo 回放是否已經走到 demo_until（時鐘停表中）。純粹給輸出加註用。"""
+def tail_speed() -> float:
+    """走到 demo_until 之後的續走倍率。0 或未設 = 停表（9/1 起的原行為）。
+
+    ★ 與 DEMO_SPEED 的分工：DEMO_SPEED 是環境變數、管 demo_until 之前那段；
+      這個鍵在 DB、只管到點之後。分開是因為前段常要快轉看完整天，
+      後段是「接上去繼續跑」，兩者要的速度不一樣。
+    """
+    v = get(K_DEMO_TAIL_SPEED)
+    if v is None:
+        return 0.0
+    try:
+        return max(0.0, float(v))
+    except ValueError:
+        return 0.0                      # 填壞了當沒設定，不讓排程炸掉
+
+
+def auto_slow() -> bool:
+    """是否啟用「遇到要現算的格就自動降速」。未設 = 關（既有回放不受影響）。
+
+    ★ 語意上的分工：demo_until 原本是人指定的終點，開了這個鍵之後改由
+      Job A′ 在第一次遇到未預測的 origin 時就地標記（標當下、不標那格的
+      origin —— 標 origin 會讓 effective_now 往回跳，前端時鐘倒退）。
+    """
+    v = get(K_DEMO_AUTO_SLOW)
+    return False if v is None else v.strip() not in ("0", "false", "off", "no")
+
+
+def demo_tailing() -> bool:
+    """是否已過 demo_until 且正在以 tail 倍率續走。給輸出加註用。"""
     until = get_ts(K_DEMO_UNTIL)
-    return until is not None and is_demo() and effective_now() >= until
+    return (until is not None and is_demo() and tail_speed() > 0
+            and effective_now() > until)
+
+
+def demo_ended() -> bool:
+    """demo 回放是否已經走到 demo_until 而且停表。純粹給輸出加註用。
+
+    ★ tail_speed > 0 時時鐘是會走的，不算「結束」—— 少了這個條件，
+      --status 會在續走中還印「停表中」。
+    """
+    until = get_ts(K_DEMO_UNTIL)
+    return (until is not None and is_demo() and tail_speed() <= 0
+            and effective_now() >= until)
 
 
 def scheduler_on() -> bool:
@@ -154,6 +211,7 @@ if __name__ == "__main__":
 
     tag = ("  ⚠⚠ 靜態虛擬時間生效中（排程會停在這裡，用完請清掉）" if is_virtual()
            else "  ⏸ demo 已走到 demo_until，時鐘停表中" if demo_ended()
+           else f"  ▶▶ 已過 demo_until，續走中（×{tail_speed():g}）" if demo_tailing()
            else f"  ▶ demo 回放中（×{config.DEMO_SPEED:g}）" if is_demo()
            else "  （真實時間）")
     print(f"\n有效 now = {effective_now()}{tag}")

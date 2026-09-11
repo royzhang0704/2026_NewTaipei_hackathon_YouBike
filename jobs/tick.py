@@ -76,6 +76,9 @@ def status() -> dict:
         "demo": demo,
         "demo_until": sc.get_ts(sc.K_DEMO_UNTIL),
         "ended": sc.demo_ended(),
+        "tailing": sc.demo_tailing(),
+        "tail_speed": sc.tail_speed(),
+        "auto_slow": sc.auto_slow(),
         "replay_predict": sc.replay_predict(),
         "on": sc.scheduler_on(),
     }
@@ -92,6 +95,8 @@ def main() -> int:
     if a.status:
         warn = ("  ⚠⚠ 靜態虛擬時間生效中（排程會停在這裡）" if s["virtual"]
                 else "  ⏸ 已走到 demo_until，時鐘停表中" if s["ended"]
+                else f"  ▶▶ 已過 demo_until，續走中（×{s['tail_speed']:g}）"
+                     if s["tailing"]
                 else f"  ▶ demo 回放中（×{config.DEMO_SPEED:g}）" if s["demo"] else "")
         print(f"有效 now      {s['now']}{warn}")
         print(f"應該拉到      {s['expected']}")
@@ -100,7 +105,11 @@ def main() -> int:
         print(f"實際拉到      {s['latest'] or '(無)'}{behind}")
         print(f"預測終點      {s['forecast_end'] or '(無)'}{left}")
         if s["demo"]:
-            print(f"回放終點      {s['demo_until'] or '(無，一路跑下去)'}")
+            tail = (f"　到點後續走 ×{s['tail_speed']:g}" if s["tail_speed"] > 0
+                    else "　到點停表")
+            print(f"自動降速      {'開（遇到要現算的格就降為 tail 速度）' if s['auto_slow'] else '關'}")
+            print(f"回放終點      {s['demo_until'] or '(無，一路跑下去)'}"
+                  + (tail if s["demo_until"] else ""))
             print(f"回放觸發 JobB {'是' if s['replay_predict'] else '否（不打 endpoint）'}")
         print(f"排程開關      {'開' if s['on'] else '關'}")
         print(f"判定①拉當下  {'該補拉' if s['due'] else '不用動'}")

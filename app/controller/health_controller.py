@@ -23,6 +23,10 @@ def healthz():
         "now": str(now),
         "virtual_now": str(now) if sc.is_virtual() else None,
         "scheduler_on": sc.scheduler_on(),
+        # 走到 demo_until 之後的續走倍率（0 = 停表）。線上要確認「時鐘還會不會走」
+        # 只能問這裡 —— now 連看兩次才看得出來，那太慢。
+        "demo_tail_speed": sc.tail_speed(),
+        "demo_auto_slow": sc.auto_slow(),
         "current_slot": str(cur) if cur else None,
         "forecast_end": str(fe) if fe else None,
         "data_age_min": round((now - cur).total_seconds() / 60) if cur else None,
