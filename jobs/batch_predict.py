@@ -302,14 +302,22 @@ def write_risk(origin: datetime, algo_ver: str = None) -> dict:
 
 def run(slot: datetime, batch_size: int = config.PREDICT_BATCH_SIZE,
         limit: int | None = None, dry_run: bool = False,
-        force: bool = False, risk_only: bool = False) -> str:
-    """跑一輪批打。Job A 觸發時呼叫這支；回傳一句話摘要。
+        force: bool = False, risk_only: bool = False,
+        stages: str = "all") -> str:
+    """跑一輪批打。回傳一句話摘要。
 
     ★ 兩階段（9/1）：① 預測寫 forecast_history ② 風險判定寫 risk_snapshot，
       完成狀態各自記在主檔 forecast_run 的 predict_status / risk_done_at。
     ★ 冪等（§3）：同 origin 已預測過就不重打（--force 覆寫）；
       風險已用同一個 algo_ver 判過就不重判。--risk-only 只跑階段二。
+
+    ★ 2026-09-12 新增 stages（計劃 §3-3）：
+        "all"     —— 現行行為：階段一＋二＋三。CLI 與手動補跑走這條。
+        "predict" —— **只跑階段一**。回放迴圈用這條，因為它要自己控三階段的
+                     順序：風險得「先刪再判」（不能走 _maybe_risk 的冪等跳過），
+                     收單得指定 origin。預設值維持 "all"，CLI 行為不變。
     """
+    only_predict = stages == "predict"
     run_id = None if dry_run else job_run_repo.start(JOB_NAME, slot)
     try:
         # 冪等要在打之前判，所以先算出「這一輪應該是誰打的」
@@ -351,8 +359,9 @@ def run(slot: datetime, batch_size: int = config.PREDICT_BATCH_SIZE,
                         [(u, slot, "skipped", None, expect_job, r, 0)
                          for u, r in skips.items()])
                 detail = {**s1, "skipped_by_idempotence": len(done)}
-                _maybe_risk(slot, force, detail)
-                _maybe_sweep(detail)
+                if not only_predict:
+                    _maybe_risk(slot, force, detail)
+                    _maybe_sweep(detail)
                 job_run_repo.finish(run_id, "skipped", stations_ok=0,
                                     error=msg, detail=detail)
             return msg
@@ -374,8 +383,9 @@ def run(slot: datetime, batch_size: int = config.PREDICT_BATCH_SIZE,
         detail = {**s1, **s2, "stations": len(items), "rows": n}
         if sys_config_repo.is_virtual():
             detail["virtual_now"] = str(sys_config_repo.effective_now())
-        _maybe_risk(slot, force, detail)
-        _maybe_sweep(detail)
+        if not only_predict:
+            _maybe_risk(slot, force, detail)
+            _maybe_sweep(detail)
         # ★ 預測終點 = origin + H×30 分。前端拿它顯示「預測涵蓋到幾點」，
         #   維運拿它跟 now 比就知道預測有沒有斷。mock 的不寫（那不是真預測）。
         if not s2["mock"]:

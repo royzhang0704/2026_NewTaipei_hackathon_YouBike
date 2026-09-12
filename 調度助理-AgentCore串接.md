@@ -310,10 +310,11 @@ ECS task definition 之類，看實際怎麼部署）裡設同名環境變數，
 ```bash
 cd backend
 pkill -f "uvicorn app.main:app"
-DEMO_SPEED=60 uv run uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
+uv run uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
 ```
 
-- `DEMO_SPEED` 要跟 tick 迴圈同值（回放 demo 時；沒跑回放就拿掉）。
+- ★ 2026-09-12 起**不必再帶 `DEMO_SPEED`**：流速的真相在 `sys_config.demo_speed`，
+  後端啟動就只是提供 API。要調速：`uv run python -m jobs.demo --speed N`。
 - 改 `.py` 有 `--reload` 會自動吃；**改 `.env`（憑證）一定要 pkill 全重啟**。
 - 想看「到底送什麼給 Harness」：起服務時加 `ASSISTANT_DEBUG_DUMP=1`，每題會寫一個
   `assistant_debug/<時間>_<問題>.txt`（prompt 全文 + 資料包 pretty + panel + Nova 原始回覆 + 數字驗證 + 最終輸出）。

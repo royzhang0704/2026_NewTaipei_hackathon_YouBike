@@ -3,7 +3,7 @@
 #
 # 用途：level30 已經有歷史資料（sql/43_level30_carry.sql 灌的 04-01~08-01），
 # 要對某一整天／某一段時間「每一格 origin × 全站」補出預測與風險判定時用。
-# 不是排程用的 —— cron 走 tick.py，這支是人手動補歷史區的驅動器。
+# 不是排程用的 —— 回放走 jobs/demo.py --run，這支是人手動補歷史區的驅動器。
 #
 # ★ 零新預測邏輯：每一輪原封不動呼叫 batch_predict.run()。
 #   組 payload、冪等、主檔 forecast_run、風險判定、job_run 稽核全部沿用，
@@ -17,7 +17,7 @@
 #   理由（9/3 查證）：batch_predict.py 的 --dry-run 沒有實作「不打 endpoint」——
 #   全檔只有 :292（跳過 job_run）與 :314（繞過冪等）兩處用到 dry_run，
 #   predict() 與 upsert() 都沒有守衛。帶著它跑會照樣 invoke、照樣寫表，
-#   而且繞過冪等後打得比不帶更多。那支是 tick/Job A 共用的線上路徑，
+#   而且繞過冪等後打得比不帶更多。那支是回放迴圈/Job A′ 共用的線上路徑，
 #   要修得先立計劃，所以這裡不呼叫它、自己接 collect() 就停。
 #
 # ★ forecast_end 會被還原：batch_predict.run() 每輪都會把 sys_config 的

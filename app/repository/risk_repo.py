@@ -43,6 +43,25 @@ ORDER_BY = ("ORDER BY r.level_n DESC, "
             "r.onset ASC, r.station_uid")
 
 
+def delete_origin(origin: datetime) -> int:
+    """清掉某個 origin 的整輪風險快照。回傳刪掉的列數。
+
+    ★ 9/12 新增：回放迴圈每推進一格都「先刪再判」（計劃 §3-3）。
+      為什麼不靠 upsert_many 覆蓋就好 —— 覆蓋只蓋得到「這輪也有算到」的站。
+      這輪站數變少時（某些站被跳過、主檔沒 cat），上一輪的殘列會留在表裡，
+      同一個 origin 於是變成一半新一半舊的混合快照。/alerts 排行吃的是
+      「一個 origin 的全部列」，混合快照會讓畫面出現早就不成立的警示，
+      而且查不出來（列本身完全合法）。先刪乾淨最便宜。
+
+    ★ 只刪這一個 origin —— 9/12 定案，歷史格保留，站點頁的 48 格風險
+      趨勢（station_history）不能因為重播而斷掉。
+    """
+    with get_conn().cursor() as cur:
+        cur.execute("DELETE FROM hackathon_backend_risk_snapshot WHERE origin = %s",
+                    (origin,))
+        return cur.rowcount
+
+
 def upsert_many(rows: list[tuple]) -> int:
     """整輪寫入（含 level_n=0 與 status='no_forecast' 的站）。
 

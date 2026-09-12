@@ -161,21 +161,40 @@ overall / dispatch）+ `truth`（對答案用，demo 回放時給 baseline 真�
 
 ## 6. 排程
 
-`jobs/tick.py` 每分鐘由 cron 呼叫，做一條判定：
+`jobs/demo.py --run` 是**常駐前景迴圈**，demo 期間唯一該推進虛擬時鐘的東西。
+睡「距下一格的真實時間」但不超過 2 秒，判定 `floor(now, 30min) > current_slot`
+才推進；推進一格做四件事：
 
-- **① 資料落後** `floor(now, 30min) > current_slot` → Job A′ 從 `baseline_grid` 搬當下這一格
-  （落後多格就一次搬齊），成功後同程序觸發 Job B 批次預測
+| 步 | 做什麼 | 備註 |
+|---|---|---|
+| ① | `baseline_grid` → `level30`（Job A′） | 落後多格一次搬齊 |
+| ② | 有預測 → 快轉通過；沒有 → **先降 ×1** 再現算 | ⚠ 降速一定在打 endpoint 之前，否則預測寫進去就過期 |
+| ③ | 清該 origin 的 `risk_snapshot`，**無條件**重判 | 不走冪等跳過 |
+| ④ | 用本輪 origin 的風險現況收調度單 | ③失敗才退回用最新一輪 |
 
-比固定 `:01 / :31` 好的原因：機器睡著／斷網／PG 沒起來的那幾輪，醒來後**下一分鐘**就補上
-（cron 不會替你補跑錯過的排程）。判定不成立就什麼都不印 —— 否則 log 一天多 2,880 行廢話。
-「輪詢還活著嗎」看 `sys_config.last_tick`，不看 log。
+判定不成立就什麼都不印 —— 否則 log 一天會多幾萬行廢話。
+「迴圈還活著嗎」看 `sys_config.last_tick` 與 `demo_loop_lease`，不看 log。
+
+### ★ 2026-09-12：tick / cron 退場，流速搬進 DB
+
+出處：`meet/20260912/計劃-demo回放邏輯重整.md`。三件事：
+
+1. **流速**由環境變數 `DEMO_SPEED` 改為 `sys_config.demo_speed`。舊制每個進程
+   各讀各的，對著同一個 DB 算出差好幾倍的「現在」。調速只有一條路：
+   `uv run python -m jobs.demo --speed N`（它會先重新錨定 `demo_t0_*`，時鐘不跳）。
+2. **推進迴圈**從 cron + `jobs/tick.py` 搬到 `jobs/demo.py --run`。tick.py 已刪除、
+   `docker-entrypoint.sh` 的 `RUN_TICK` 背景迴圈已移除 —— **後端啟動只提供 API**。
+   單一實例靠 DB 租約 `sys_config.demo_loop_lease`（檔案鎖擋不到另一個容器）。
+   ⚠ 裝過舊 crontab 的機器要 `crontab -r`，否則會有兩個迴圈同時推時鐘而**不報錯**。
+3. **現算中**寫 `sys_config.demo_predicting`，前端據此上全頁遮罩「最新資料載入中」。
+   有 10 分鐘 TTL 自癒，迴圈被 kill 也不會讓遮罩卡死。
 
 ### ★ 2026-09-04：TDX 拉取邏輯已移除
 
 Job A（即時 API）／Job C（歷史 API 自癒回補）／`sync_stations`（主檔同步）三支與
 `app/tdx/` client 全部刪除，連帶 `actual_history` 表、週期補值、TDX 用量護欄與點數對帳。
 唯一的資料來源是 `baseline_grid`，站點主檔改為手動匯入維護。
-**tick 只在 demo 回放模式下有事做** —— 非 demo 時印一次警告就離開。
+**回放迴圈只在 demo 模式下有事做** —— 非 demo 時 `--run` 直接拒絕啟動。
 出處：`meet/20260904/計劃-移除TDX拉取邏輯.md`。
 
 ---
@@ -200,8 +219,9 @@ uv run python aws/deploy_endpoint.py
 uv run uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
 curl -s http://127.0.0.1:8000/api/v1/healthz | python3 -m json.tool
 
-# 4. 排程
-crontab jobs/crontab.txt        # 或：while true; do bash jobs/run_job.sh tick; sleep 60; done
+# 4. 回放（★ 不要裝 crontab，2026-09-12 起那份已經沒有內容）
+uv run python -m jobs.demo --start --speed 30    # 設虛擬時鐘與流速
+uv run python -m jobs.demo --run                 # 常駐迴圈（前景，Ctrl-C 收工）
 ```
 
 ★ 換一份新的 dump 時**一定要先 `down -v`** —— volume 非空的話官方 postgres image
@@ -239,13 +259,16 @@ psql -v ON_ERROR_STOP=1 -f sql/42_level30_is_imputed.sql -f sql/43_level30_carry
 回放時等於沒看過答案，可以當場「對答案」）：
 
 ```bash
-uv run python -m jobs.demo --start --reset      # 預載 4 月資料 + 設虛擬時鐘
-uv run python -m jobs.demo --status             # 虛擬時刻／回放進度
+uv run python -m jobs.demo --start --reset      # 清既有預測 + 設虛擬時鐘
+uv run python -m jobs.demo --run                # ★ 開迴圈（唯一的時鐘推進者）
+uv run python -m jobs.demo --speed 1            # 迴圈跑著也能改（另開終端）
+uv run python -m jobs.demo --status             # 虛擬時刻／回放進度／迴圈租約
 uv run python -m jobs.demo --stop               # 收工
 ```
 
-虛擬時間起點 `2026-05-01 08:00`，流速 5（真實 1 分鐘 = 虛擬 5 分鐘，一格 30 分 = 真實 6 分鐘）。
-tick 一律走 Job A′（從 baseline_grid 逐格搬）—— 2026-09-04 起這是唯一的資料來源。
+虛擬時間起點 `2026-05-01 08:00`，預設流速 5（真實 1 分鐘 = 虛擬 5 分鐘，一格 30 分 = 真實 6 分鐘）。
+迴圈一律走 Job A′（從 baseline_grid 逐格搬）—— 2026-09-04 起這是唯一的資料來源。
+走到沒有預先算好的格時會自動降回 ×1 現算，**算完不自動回快轉**（9/12 定案）。
 
 ---
 

@@ -4,7 +4,10 @@
 #
 # 真排程的 Job A 打 TDX；回放模式資料早就在 baseline_grid 裡，
 # 「抓取」退化成「對時」：把當下 slot 那一格從 baseline_grid 搬進
-# level30，其餘照抄 Job A 的骨架（覆蓋率門檻 → job_run → 書籤 → Job B）。
+# level30，其餘照抄 Job A 的骨架（覆蓋率門檻 → job_run → 書籤）。
+#
+# ★★ 2026-09-12：本檔到「書籤」為止，**不再觸發 Job B、不再管降速**。
+#   預測／風險／收單的編排在 jobs/demo.py 的回放迴圈（計劃 §3-3）。
 #
 # ★ 不寫 actual_history、不做週期補值 —— baseline_grid 是 ground truth，
 #   回放不得污染。
@@ -162,34 +165,18 @@ def has_forecast(slot: datetime) -> bool:
         return cur.fetchone()["n"] > 0
 
 
-def maybe_slow_down(slot: datetime) -> None:
-    """demo_auto_slow：走到第一個「要現算」的格，就把時鐘降回 tail 速度。
+def run(slot: datetime, since: datetime | None = None) -> tuple[bool, str]:
+    """跑一輪 Job A′：**只搬資料**（計劃 §3-3 的第①步）。
 
-    ★ demo_until 標的是「當下」不是「slot 的 origin」——
-      標 origin 會讓 effective_now 往回跳（時鐘倒退，前端會看到時間回捲）。
-      標當下則是連續的：real_at_until 反推出來剛好是此刻。
+    since = 上一次回放到的 slot（迴圈的 latest）；中間的洞一併搬。
 
-    ★ 只在 demo_until 還沒設過時動手。降速後這個鍵就有值了，
-      之後每一格都會走到這裡但什麼都不做 —— 降速是一次性的狀態轉換。
+    ★ 2026-09-12：原本掛在尾巴的 maybe_slow_down() 與「觸發 Job B」兩段
+      已經拿掉，改由 jobs/demo.py 的迴圈編排四步。
+      出處：meet/20260912/計劃-demo回放邏輯重整.md §3-3。
+      理由：舊制要回答「這一格為什麼沒有預測」得跳四個檔（tick → replay_pull
+      → batch_predict → dispatch_sweep），而且收單有兩份實作。搬資料就只做
+      搬資料，這支才有辦法被單獨重跑。
     """
-    if not sys_config_repo.auto_slow():
-        return
-    if sys_config_repo.get_ts(sys_config_repo.K_DEMO_UNTIL) is not None:
-        return                                  # 已經降過速
-    if has_forecast(slot):
-        return                                  # 這格有預測，快轉通過
-    if sys_config_repo.tail_speed() <= 0:
-        sys_config_repo.set(sys_config_repo.K_DEMO_TAIL_SPEED, "1")
-    now = sys_config_repo.effective_now()
-    sys_config_repo.set(sys_config_repo.K_DEMO_UNTIL, now)
-    print(f"── ⏬ origin={slot} 沒有預測過（要現算）"
-          f"→ 時鐘自 {now} 起降為 ×{sys_config_repo.tail_speed():g}")
-
-
-def run(slot: datetime, trigger: bool = True,
-        since: datetime | None = None) -> tuple[bool, str]:
-    """跑一輪 Job A′。介面對齊 pull_realtime.run —— tick 兩邊可互換。
-    since = 上一次回放到的 slot（tick 的 latest）；中間的洞一併搬。"""
     run_id = job_run_repo.start(JOB_NAME, slot)
     try:
         n_grid, n_total = copy_range(since, slot)
@@ -219,18 +206,6 @@ def run(slot: datetime, trigger: bool = True,
         sys_config_repo.set(sys_config_repo.K_CURRENT_SLOT, slot)
         print(f"✓ Job A′ success（stations_ok={n_grid}）")
 
-        if trigger:
-            maybe_slow_down(slot)
-            print(f"── 觸發 Job B（origin={slot}）")
-            from jobs import batch_predict
-            try:
-                print(f"   {batch_predict.run(slot)}")
-            except Exception as e:      # Job B 的失敗不該蓋掉 Job A′ 的成功
-                print(f"   Job B 失敗（已記在它自己那列）：{type(e).__name__}: {e}")
-        else:
-            # sys_config.replay_predict = 0：重播既有預測，不打 endpoint。
-            # 一定要印 —— 否則 log 上看不出這一格「為什麼沒有預測」
-            print(f"── 跳過 Job B（replay_predict=0，沿用既有 origin={slot} 的預測）")
         return True, f"stations_ok={n_grid}"
 
     except Exception as e:

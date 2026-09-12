@@ -84,11 +84,17 @@ CAVEATS = ["q=0.18 為 d2604v2-r2 @ context 48 格的全時段校準值（目標
 # ── demo 回放模式（meet/20260831/計劃-demo回放模式與重訓.md §2）──
 #   sys_config 的 demo_t0_real / demo_t0_virtual 兩鍵有值即生效
 #   （單一事實源在 DB，不在這裡 —— 這裡只放不隨 demo 開關變的參數）。
-#   流速：真實經過 1 秒 = 虛擬經過 DEMO_SPEED 秒。
+#   流速：真實經過 1 秒 = 虛擬經過 demo_speed 秒。
 #   5 = 真實 1 分鐘走虛擬 5 分鐘（8/31 定案），一格 30 分 = 真實 6 分鐘。
-#   ⚠ 改流速前要先重新錨定 demo_t0_*（以當前虛擬時刻為新起點），
-#     否則 now = t0v + 經過時間 × 速度 會讓虛擬時間瞬間跳走。
-#     改完 config 記得重啟 uvicorn（tick 每輪新 process 會自動吃到新值）。
+#
+# ★★ 2026-09-12：**流速的真相搬到 DB 了**（sys_config.demo_speed）。
+#   本值降級為「那個鍵沒設定時的預設值」，平時不會被用到。
+#   出處：meet/20260912/計劃-demo回放邏輯重整.md §3-1。
+#   理由：這是環境變數，uvicorn／jobs／另開終端的 --status 各讀各的，
+#   同一個 DB 算出差好幾倍的「現在」，畫面看起來就像卡住。
+#   ⇒ 要調流速一律用：uv run python -m jobs.demo --speed N
+#     （那支會先重新錨定 demo_t0_* 再寫值 —— 少了這步時鐘會瞬間跳走。
+#      直接 `sys_config_repo --set demo_speed` 已被擋下並提示改用上面那行。）
 DEMO_SPEED = float(os.environ.get("DEMO_SPEED", "5"))
 DEMO_VIRTUAL_T0 = "2026-05-01 08:00:00"   # 虛擬時間起點（8/31 使用者定案：早上八點開場）
 # ★ 2026-09-02：名字還叫 PRELOAD 但已經不預載了（決策 13，demo.py 不再碰
