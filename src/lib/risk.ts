@@ -30,7 +30,7 @@ export interface ActionBlock {
   support: string | null
 }
 
-const ACT_WORD: Record<'refill' | 'remove', string> = { refill: '建議補車', remove: '建議取車' }
+const ACT_WORD: Record<'refill' | 'remove', string> = { refill: '建議補', remove: '建議取' }
 
 export function actionBlock(k: DayRisk): ActionBlock {
   const ls = LV_N[k.shortage.level]
