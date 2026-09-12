@@ -17,7 +17,13 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 load_dotenv(BASE_DIR / ".env", override=False)
 
 # ── AWS / endpoint ──
-REGION        = "ap-northeast-1"                              # ml-deepar/sm_train.py
+# ★ 2026-09-12：改吃 env —— 賽會帳號在 us-west-2，寫死 ap-northeast-1 會讓
+#   endpoint_repo 的 sagemaker-runtime client 打到沒有端點的區，回來是
+#   AccessDenied（政策不涵蓋那個 ARN），看起來像權限問題其實是區域問題。
+#   優先序：SM_REGION（與 ml-deepar/sm_train.py 同一個鍵）→ AWS_REGION → 自有帳號預設。
+REGION        = (os.environ.get("SM_REGION")
+                 or os.environ.get("AWS_REGION")
+                 or "ap-northeast-1")                        # ml-deepar/sm_train.py
 ENDPOINT_NAME = os.environ.get("ENDPOINT_NAME", "youbike-deepar-d2604v2-r2")
 
 # ★ H 與 CONTEXT 寫死不從 meta.json 讀（8/28 教訓：cal_h6 那份 meta 是舊值
