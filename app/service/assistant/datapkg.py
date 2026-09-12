@@ -8,9 +8,10 @@ import re
 from dataclasses import dataclass, field
 from typing import Literal, TypedDict
 
+from app.errors import AppError
 from app.geo import dist_word, haversine_m
 from app.repository import station_repo
-from app.service import alert_service
+from app.service import alert_service, dispatch_service
 
 from . import common as C
 from .scope import find_station, named_towns
@@ -263,7 +264,46 @@ def _attach_station(q: str, ctx: dict, data: dict, items: list[dict],
     if a is None:  # 該站不在目前範圍的清單裡，另查一次
         a = next((i for i in alert_service.alerts(town_code=st["town_code"], limit=1000)["items"]
                   if i["station_uid"] == st["station_uid"]), None)
-    data["站點"] = {
+    data["站點"] = station_block(st, a)
+    return st, [{"label": f"開啟 {st['station_name']}",
+                "type": "select_station", "value": st["station_uid"]}]
+
+
+def _donor_action(i: dict) -> dict:
+    return {"label": f"調出點：{i['name']}", "type": "select_station", "value": i["station_uid"]}
+
+
+def dispatch_block(r: dict) -> tuple[list[dict], str | None]:
+    """candidates() 結果 → 資料包的（可調出候選, 可調出備註）。
+
+    ★ 打字路徑（_attach_donors）與按鈕路徑（events.dispatch_events）共用這一支
+      —— 兩條路不只候選要一樣，連給 LLM 的**形狀**也要一樣，否則同一組候選
+      會因為欄位名不同而被寫成兩種文案。
+    """
+    picked = [i for i in r["items"] if i["selected"]]
+    show = picked or r["items"][:5]
+    if not show:
+        return [], None
+    block = [
+        {"name": i["name"], "行政區": i["town"],
+         # 刻意不用「建議取 N 台」這種指令式字眼，避免被讀成「從這裡取 N 台」
+         "可調出上限": i["supply"], "建議調出": i["bikes"],
+         "直線距離": dist_word(i["distance_m"]),
+         **({"跨區": True} if i["cross_town"] else {}),
+         **({"備註": i["note"]} if i["note"] else {})}
+        for i in show
+    ]
+    note = None
+    if r["shortfall"] > 0:
+        acc = sum(i["bikes"] for i in picked)
+        note = (f"附近餘裕站合計約 {acc} 台，尚缺 {r['shortfall']} 台"
+                f"建議由調度中心的備用車補入")
+    return block, note
+
+
+def station_block(st: dict, a: dict | None) -> dict:
+    """單站現況 → 資料包的「站點」區塊（llm.templated_answer 吃這個形狀）。"""
+    return {
         "name": st["station_name"], "行政區": st["town"],
         "狀態": (f"{C.SIDE_WORD.get(a['side'])}・{C.LV_WORD.get(a['level'])}"
                 if a and a["level"] != "none" else "供需健康"),
@@ -273,56 +313,73 @@ def _attach_station(q: str, ctx: dict, data: dict, items: list[dict],
         "預計越線": C.hhmm(a.get("onset")) if a else None,
         "常態水位": (a.get("baseline") if a else None),
     }
-    return st, [{"label": f"開啟 {st['station_name']}",
-                "type": "select_station", "value": st["station_uid"]}]
 
 
-def _donor_action(i: dict) -> dict:
-    return {"label": f"調出點：{i['name']}", "type": "select_station", "value": i["station_uid"]}
+def dispatch_datapkg(anchor_uid: str, r: dict) -> dict:
+    """按鈕路徑（intent='dispatch'）的資料包 —— 不經 regex、不經 gather_context。
+
+    ★ 形狀刻意與打字路徑一致：同樣的「站點」區塊 + 同樣的「可調出候選」，
+      所以 RULES ⑪、unverified_numbers、templated_answer 全部照原樣適用，
+      不必為按鈕路徑另外維護一套。
+    """
+    st = station_repo.find(anchor_uid)
+    a = next((i for i in alert_service.alerts(town_code=st["town_code"],
+                                              limit=1000)["items"]
+              if i["station_uid"] == anchor_uid), None) if st else None
+    data = {"站點": station_block(st, a)} if st else {"站點": {"name": anchor_uid}}
+    block, note = dispatch_block(r)
+    if block:
+        data["站點"]["可調出候選"] = block
+    if note:
+        data["站點"]["可調出備註"] = note
+    return data
 
 
 def _attach_donors(data: dict, st: dict | None, city_items: list[dict]) -> list[dict]:
-    """「從哪調車過來」→ 可供調出的站：風險模型說「該取車」的滿站（dispatch=remove），
-    所以每站的『可調出上限』就是「可安全調出、調完仍健康」的量，助理不用自己判斷來源會不會變風險。
-    有目標站 → 依直線距離排序、只留 DONOR_MAX_M 內的；都太遠 → 改建議用調度中心備車。
-    沒目標站（區/全市層級）→ 給該範圍的、不排序（沒有基準點算不了距離）。
-    回傳「調出點」按鈕（前 3 個近站），前端可點去地圖定位。"""
+    """「從哪調車過來」→ 可供調出的站。
+
+    ★ 有目標站時一律走 dispatch_service.candidates() —— 與行動卡按鈕
+      （intent='dispatch'）**同一支實作**。9/12 定案 1：打字問跟按按鈕
+      必須拿到同一組候選，否則使用者先問一次、再按一次會看到兩份不同的
+      名單，而他無從判斷該信哪一份。
+      候選定義也因此一併換成「現況 vs 該時段常態」，不再是舊的
+      「side=full 且 action=remove」—— 舊規則只找得到「已經滿到該取車」
+      的站，漏掉「比常態多 7 台、還遠不到滿站風險」這種最常用的來源。
+
+    沒目標站（區／全市層級）→ 沒有基準點算不了距離，也沒有 anchor 可以
+    定義「餘裕」，維持原本的做法：列出該範圍的可取車滿站，不排序。
+
+    回傳「調出點」按鈕（前幾個近站），前端可點去地圖定位。
+    """
     far = "附近沒有可調出的餘裕站，建議由調度中心的備用車 / 調度站預備車補入"
     reserve = "本區沒有可調出的滿站，建議由調度中心的備用車補入"
+    quiet = "這站目前不需要調度（供需健康或預計自行消退），暫無調出需求"
+
+    if st:
+        try:
+            r = dispatch_service.candidates(st["station_uid"])
+        except AppError as e:
+            # DISPATCH_NOT_APPLICABLE：這站本輪 hold／無風險，沒有調度可發起
+            # NO_RISK_SNAPSHOT／STATION_NOT_FOUND：本輪查無判定
+            data.setdefault("站點", {})["可調出備註"] = (
+                quiet if e.code == "DISPATCH_NOT_APPLICABLE" else far)
+            return []
+
+        block, note = dispatch_block(r)
+        if not block:
+            data.setdefault("站點", {})["可調出備註"] = far
+            return []
+        data.setdefault("站點", {})["可調出候選"] = block
+        if note:
+            data["站點"]["可調出備註"] = note
+        picked = [i for i in r["items"] if i["selected"]]
+        return [_donor_action({"name": i["name"], "station_uid": i["uid"]})
+                for i in (picked or r["items"][:5])]
+    # 沒目標站（區 / 全市層級）：只放清單，不排序、不做按鈕（沒有基準點）
+    # ★ 這一段刻意維持舊口徑（風險模型說「該取車」的滿站）—— candidates()
+    #   需要一個 anchor 才能定義「餘裕」與距離，區／全市層級沒有那個錨點。
     donors = [i for i in city_items
               if i["side"] == "full" and (i.get("dispatch") or {}).get("action") == "remove"]
-    if st and donors:
-        coord = {s["station_uid"]: (s["lat"], s["lon"]) for s in station_repo.all_stations()}
-        here = coord.get(st["station_uid"])
-        ranked = [(i, haversine_m(here, coord.get(i["station_uid"]))) for i in donors]
-        near = sorted((x for x in ranked if x[1] is not None and x[1] <= C.DONOR_MAX_M),
-                      key=lambda x: x[1])[:5]
-        if near:
-            # 從最近的開始累加「可調出上限」，湊到本站『建議補 N 台』就停 —— 資料包 / chip / prose 同一組
-            m = re.search(r"補\s*(\d+)", data.get("站點", {}).get("建議", "") or "")
-            need = int(m.group(1)) if m else None
-            if need:
-                pick, acc = [], 0
-                for i, dist in near:
-                    pick.append((i, dist))
-                    acc += (i.get("dispatch") or {}).get("bikes") or 0
-                    if acc >= need:
-                        break
-                near = pick
-                if acc < need:  # 附近餘裕站全加起來還不夠 N
-                    data.setdefault("站點", {})["可調出備註"] = (
-                        f"附近餘裕站合計約 {acc} 台，尚缺 {need - acc} 台建議由調度中心的備用車補入")
-            data.setdefault("站點", {})["可調出候選"] = [
-                {**_donor_item(i), "直線距離": dist_word(dist)} for i, dist in near
-            ]
-            return [_donor_action(i) for i, _ in near]
-        # 最近的滿站也超過上限 —— 站對站不划算
-        data.setdefault("站點", {})["可調出備註"] = far
-        return []
-    if st:
-        data.setdefault("站點", {})["可調出備註"] = reserve
-        return []
-    # 沒目標站（區 / 全市層級）：只放清單，不排序、不做按鈕（沒有基準點）
     if data.get("行政區") is not None:
         same = [i for i in donors if i["town"] == data["行政區"]["name"]]
         if same:

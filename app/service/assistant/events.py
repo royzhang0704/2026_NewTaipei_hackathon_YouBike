@@ -10,10 +10,11 @@ from collections.abc import Iterator
 
 from app.errors import AppError
 from app.repository import station_repo
+from app.service import dispatch_service
 
 from . import common as C
 from . import llm, scope
-from .datapkg import gather_context
+from .datapkg import dispatch_datapkg, gather_context
 
 _log = logging.getLogger("assistant")
 
@@ -36,6 +37,15 @@ def chat_events(messages: list[dict], ctx: dict) -> Iterator[dict]:
         return
 
     ctx = ctx or {}
+
+    # ── 調度確認：按鈕帶旗標進來，繞過整段意圖判斷 ──────────
+    # ★ 擺在**所有前置之前**（is_noise / GREETING / OTHER_CITY / resolve_scope
+    #   全部跳過）。按鈕點下去的意圖是 100% 確定的，再用 regex 判一次只會
+    #   引入失敗率 —— datapkg 已記過一次教訓：「補車」二字誤命中清單題
+    #   regex，答非所問地跳出整個土城區表格。
+    if ctx.get("intent") == "dispatch" and ctx.get("anchor_uid"):
+        yield from dispatch_events(ctx)
+        return
 
     # ── 不打 Harness 的前置 ──────────────────────────────
     if scope.is_noise(q):
@@ -121,6 +131,76 @@ def chat_events(messages: list[dict], ctx: dict) -> Iterator[dict]:
             yield from _tail()
         else:
             yield {"type": "error", "message": C.UNAVAILABLE_MSG}
+
+
+def dispatch_events(ctx: dict) -> Iterator[dict]:
+    """調度候選 → 卡片先送、文案後送。
+
+    ★ 事件順序刻意是「先清單、後文案」：
+        {"type":"dispatch"}  立刻（程式算的，毫秒）—— 使用者馬上能勾、能按確認
+        {"type":"delta"}     2~5 秒後 —— Bedrock 寫的總結
+      反過來會讓使用者對著轉圈圈等 5 秒才看到能點的東西。**按鈕不必等 LLM。**
+
+    ★ 附帶好處：Bedrock 掛掉時，候選卡片與確認按鈕**完全不受影響**
+      —— 清單本來就沒經過 LLM，降級的只有那段文案。
+    """
+    anchor_uid = ctx["anchor_uid"]
+    try:
+        r = dispatch_service.candidates(anchor_uid, ctx.get("action"))
+    except AppError as e:
+        yield {"type": "error", "message": e.message}
+        return
+
+    # ① 先送卡片
+    yield {"type": "dispatch", **r}
+
+    a = r["anchor"]
+    if not r["items"]:
+        # 一台都調不出來：不必打 LLM，直接照實說
+        msg = (f"{a['name']}目前{'建議補' if a['action'] == 'refill' else '建議取'}"
+               f"{a['need']} 台，但附近沒有可調出的餘裕站，"
+               f"建議由調度中心的備用車補入。")
+        for c in C.chunks(msg):
+            yield {"type": "delta", "text": c}
+        yield {"type": "suggestions", "items": _dispatch_followups(a)}
+        yield {"type": "done"}
+        return
+
+    # ② 再送文案
+    data = dispatch_datapkg(anchor_uid, r)
+    act = "補" if a["action"] == "refill" else "取"
+    q = f"{a['name']}要{act}{a['need']}台，從哪些站調度？"
+    prompt = llm.build_agent_prompt(q, ctx, data, None)
+    sid = scope.session_id([], ctx)
+
+    nova_raw, bad, final = "", [], ""
+    try:
+        nova_raw = "".join(ev["text"] for ev in
+                           llm.invoke_harness(C.SYSTEM_PROMPT, prompt, sid)
+                           if ev.get("type") == "delta")
+        answer = llm.strip_source_line(nova_raw).strip()
+        bad = llm.unverified_numbers(answer, data)
+        if bad:
+            _log.warning("dispatch number check failed %s → 退回模板", bad)
+            answer = llm.templated_answer(data) or answer
+        final = answer or llm.templated_answer(data) or C.UNAVAILABLE_MSG
+    except Exception:  # noqa: BLE001
+        _log.exception("dispatch invoke_harness failed")
+        bad = ["<exception>"]
+        # ★ 降級：卡片已經送出去了，使用者照樣能勾選確認，只有文案變樸素
+        final = (llm.templated_answer(data)
+                 + "（調度助理暫時無法回應，以上為系統即時摘要）")
+    llm.dump_debug(q, ctx, C.SYSTEM_PROMPT, prompt, sid, data, None, nova_raw, bad, final)
+
+    for c in C.chunks(final):
+        yield {"type": "delta", "text": c}
+    yield {"type": "suggestions", "items": _dispatch_followups(a)}
+    yield {"type": "done"}
+
+
+def _dispatch_followups(a: dict) -> list[str]:
+    return [f"「{a['name']}」為什麼建議這個台數？",
+            f"{a['town']}還有哪些站要處理？", "現在全市概況？"]
 
 
 def _followups(q: str, data: dict | None) -> list[str]:

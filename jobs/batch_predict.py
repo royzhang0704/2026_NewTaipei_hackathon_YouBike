@@ -319,6 +319,7 @@ def run(slot: datetime, batch_size: int = config.PREDICT_BATCH_SIZE,
             print("   跳過階段一：--risk-only")
             detail = {"skip_predict": "--risk-only"}
             n_risk = _maybe_risk(slot, force, detail)
+            _maybe_sweep(detail)
             if run_id:
                 job_run_repo.finish(run_id, "skipped",
                                     error="預測跳過：--risk-only", detail=detail)
@@ -351,6 +352,7 @@ def run(slot: datetime, batch_size: int = config.PREDICT_BATCH_SIZE,
                          for u, r in skips.items()])
                 detail = {**s1, "skipped_by_idempotence": len(done)}
                 _maybe_risk(slot, force, detail)
+                _maybe_sweep(detail)
                 job_run_repo.finish(run_id, "skipped", stations_ok=0,
                                     error=msg, detail=detail)
             return msg
@@ -373,6 +375,7 @@ def run(slot: datetime, batch_size: int = config.PREDICT_BATCH_SIZE,
         if sys_config_repo.is_virtual():
             detail["virtual_now"] = str(sys_config_repo.effective_now())
         _maybe_risk(slot, force, detail)
+        _maybe_sweep(detail)
         # ★ 預測終點 = origin + H×30 分。前端拿它顯示「預測涵蓋到幾點」，
         #   維運拿它跟 now 比就知道預測有沒有斷。mock 的不寫（那不是真預測）。
         if not s2["mock"]:
@@ -420,6 +423,32 @@ def _maybe_risk(slot: datetime, force: bool, detail: dict) -> str | None:
         detail["risk_error"] = f"{type(e).__name__}: {e}"
         print(f"   ⚠ 風險判定失敗（預測仍有效）：{detail['risk_error']}")
         return None
+
+
+def _maybe_sweep(detail: dict) -> None:
+    """階段三：依本輪風險現況收掉已完成／已失效的調度單。
+
+    ★ 同程序呼叫而不是另開排程：順序天然保證 —— 風險寫完才檢查調度，
+      不會出現「拿上一輪的 action 去收這一輪的單」。
+
+    ★ 與階段二同樣的紀律：**失敗不可讓整輪變 failed**。調度單是使用者的
+      決定，收不收得掉不影響預測與風險這兩個主產出；沒收掉的單下一輪
+      會再被掃到（judge 是純比對，沒有狀態要接續）。
+    """
+    from jobs import dispatch_sweep
+
+    try:
+        # job_run 由 sweep 自己寫一列（job_name='dispatch_sweep'）——
+        # 整輪統計與逐筆 closed_reason 就是「log 兩層」，不另開表。
+        c = dispatch_sweep.sweep()
+        if c.get("note") or c["checked"] == 0:
+            return
+        print(f"   調度收尾：檢查 {c['checked']} 筆 → 完成 {c['fulfilled']}／"
+              f"失效 {c['invalid']}／續留 {c['active_remain']}")
+        detail.update({f"dispatch_{k}": v for k, v in c.items()})
+    except Exception as e:                       # noqa: BLE001
+        detail["dispatch_error"] = f"{type(e).__name__}: {e}"
+        print(f"   ⚠ 調度收尾失敗（預測與風險仍有效）：{detail['dispatch_error']}")
 
 
 def main() -> int:

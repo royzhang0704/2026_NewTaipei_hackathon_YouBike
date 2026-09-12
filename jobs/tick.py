@@ -9,6 +9,12 @@
 #     expected > latest  →  跑 Job A′（replay_pull：baseline_grid → level30）
 #     否則               →  什麼都不做，安靜離開
 #
+# ★ 2026-09-12：Job A′ 成功後接「階段三 = 調度單收尾」。
+#   只在 replay_predict=0 時跑 —— 那條路不打 endpoint、batch_predict 不執行，
+#   它裡面的 _maybe_sweep() 也就跟著不跑。收單只吃 risk_snapshot，跟有沒有
+#   重算預測無關，所以補在這裡。trigger=1 時仍由 batch_predict 那份負責。
+#   出處：meet/20260912/計劃-調度確認.md §7
+#
 # ★★ 2026-09-04：判定② / Job C（歷史回補自癒）整條移除，TDX 拉取邏輯
 #   全部清掉 —— 唯一的資料來源是 baseline_grid，沒有東西可以「回補」。
 #   出處：meet/20260904/計劃-移除TDX拉取邏輯.md §1-2。
@@ -82,6 +88,29 @@ def status() -> dict:
         "replay_predict": sc.replay_predict(),
         "on": sc.scheduler_on(),
     }
+
+
+def sweep_dispatch() -> None:
+    """回放推進一格後收掉調度單（Job A′ 不打 endpoint 時的階段三）。
+
+    ★ 沿用 batch_predict._maybe_sweep 的紀律：**失敗不可讓整輪變 failed**。
+      回放把資料搬齊才是主產出；沒收掉的單下一輪會再被掃到
+      （judge 是純比對，沒有狀態要接續）。
+
+    ★ 刻意不傳 origin —— sweep() 預設用 latest_risk_origin(effective_now())，
+      與前端 /alerts 的錨點是同一支，收單判定和畫面看到的風險現況保證同一輪。
+      硬塞 expected 會在「那一格還沒判過風險」時變成永遠的 no-op。
+    """
+    from jobs import dispatch_sweep
+
+    try:
+        c = dispatch_sweep.sweep()
+        if c.get("note") or c["checked"] == 0:
+            return
+        print(f"   調度收尾：檢查 {c['checked']} 筆 → 完成 {c['fulfilled']}／"
+              f"失效 {c['invalid']}／續留 {c['active_remain']}")
+    except Exception as e:                        # noqa: BLE001
+        print(f"   ⚠ 調度收尾失敗（不影響本輪）{type(e).__name__}: {e}")
 
 
 def main() -> int:
@@ -158,6 +187,15 @@ def main() -> int:
                                   trigger=s["replay_predict"])
         print(f"── Job A′ 結束：{'成功' if ok else '未成功'} {msg}")
         rc = rc or (0 if ok else 1)
+        # ── 階段三　收掉已完成／已失效的調度單 ──────────────
+        # ★ 為什麼這裡也要一份（batch_predict 階段三已經有一份）：
+        #   replay_predict=0 時 Job A′ 不打 endpoint，batch_predict 整支不
+        #   執行 —— 掛在它後面的 _maybe_sweep() 就永遠不會跑。但收單的輸入
+        #   只有 risk_snapshot，回放那些格早就算好了，沒有理由因為「這輪
+        #   沒重算預測」就不收單。回放推進一格 = 有新的風險現況 = 該收單。
+        #   trigger=True 時交給 batch_predict 那份，這裡跳過不重複記 job_run。
+        if ok and not s["replay_predict"]:
+            sweep_dispatch()
     else:
         print("   判定①：資料是新的，不拉")
 

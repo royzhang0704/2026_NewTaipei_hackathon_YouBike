@@ -5,7 +5,7 @@
 #   crontab -e                      # 貼下面「實際內容」那幾行
 #   crontab -l                      # 確認裝上了
 # 或整份匯入（★ 會覆蓋現有 crontab，目前是空的所以安全）：
-#   crontab /Volumes/myPro/codes/race/youbike-hackathon/backend/jobs/crontab.txt
+#   crontab /Volumes/myPro/codes/race/youbike-hackathon/code_backend/jobs/crontab.txt
 #
 # 移除：crontab -r
 # ════════════════════════════════════════════════════════════
@@ -46,9 +46,11 @@
 SHELL=/bin/bash
 
 # 每分鐘輪詢：資料落後才從 baseline_grid 搬一格（成功就同程序觸發 Job B）
+# ★ 2026-09-12：目錄是 code_backend/ 不是 backend/ —— 本檔原本寫錯，
+#   cron 找不到檔案時**完全不出聲**，看起來就像「裝了但什麼都沒發生」。
 # 現況查詢：uv run python -m jobs.tick --status
 #           uv run python -m jobs.demo --status      # 回放時鐘與進度
-* * * * * /bin/bash /Volumes/myPro/codes/race/youbike-hackathon/backend/jobs/run_job.sh tick
+* * * * * /bin/bash /Volumes/myPro/codes/race/youbike-hackathon/code_backend/jobs/run_job.sh tick
 
 # ★ 2026-09-04：sync_stations（站點主檔每日同步）那行已移除 ——
 #   該支檔案隨 TDX 拉取邏輯一起刪掉，主檔改為手動匯入維護。
