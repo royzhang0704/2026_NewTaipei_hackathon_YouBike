@@ -1,8 +1,8 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
 import { ArrowDown, ArrowUp } from 'lucide-react'
 import { useAppStore, type AlertSide } from '@/stores/useAppStore'
-import { useAlerts } from '@/api/queries'
-import type { RiskLevel } from '@/api/types'
+import { useAlerts, useDispatchOrders } from '@/api/queries'
+import type { AlertItem, RiskLevel } from '@/api/types'
 import { segChip } from '@/components/ui/segChip'
 import { cn } from '@/lib/utils'
 
@@ -20,6 +20,19 @@ const LEVEL_GROUPS: { level: Exclude<RiskLevel, 'none'>; title: string }[] = [
   { level: 'low', title: '低風險' },
 ]
 
+/* 「已調派」的判定 —— 跟 StationDetail:56 與後端 dispatch_service:103 同一條算式：
+   need = 警示的建議台數（risk_snapshot 原始值，**沒有**扣掉已派的量），
+   sent = 該站目前所有 active 調度單的台數合計（撤銷過的不算）。
+
+   ★ 只認「全數覆蓋」：sent >= need 才算處理完。派了一半的站仍缺車，
+     把它從清單上藏掉等於讓它被遺忘（9/12 使用者定案）。
+   ★ need <= 0 不算已調派：那是「本輪沒有建議台數」，跟有人去派過是兩回事，
+     照 sent(0) >= need(0) 硬算會把它一起藏掉。 */
+function coveredBy(it: AlertItem, sentBy: Map<string, number>) {
+  const need = it.dispatch?.bikes ?? 0
+  return need > 0 && (sentBy.get(it.station_uid) ?? 0) >= need
+}
+
 export function AlertList() {
   const townCode = useAppStore((s) => s.townCode)
   const selectedUid = useAppStore((s) => s.selectedUid)
@@ -28,13 +41,14 @@ export function AlertList() {
   // 篩選狀態在 store：上方 KPI 也能寫（點 KPI = 套用該篩選）
   const side = useAppStore((s) => s.alertSide)
   const level = useAppStore((s) => s.alertLevel)
+  const hideCovered = useAppStore((s) => s.alertHideCovered)
   const setAlertFilter = useAppStore((s) => s.setAlertFilter)
 
   // 換地區 / 換篩選 → 清單內容整批換掉，把外層捲軸帶回頂端（否則會停在舊位置看到空白）
   const topRef = useRef<HTMLDivElement>(null)
   useEffect(() => {
     topRef.current?.scrollIntoView({ block: 'nearest' })
-  }, [townCode, side, level])
+  }, [townCode, side, level, hideCovered])
 
   // sticky 表頭（篩選列＋狀態列）會浮在捲動區上緣 → 量它的高度當作 row 的 scroll-margin-top，
   // 否則捲到上方的目標列會被表頭遮掉一半。字級 / chip 換行會改變高度，用 ResizeObserver 追。
@@ -71,11 +85,32 @@ export function AlertList() {
   const { data, isPending, isError } = useAlerts({ limit: 1000, town_code: townCode || null })
   const all = useMemo(() => data?.items ?? [], [data])
 
-  const filtered = useMemo(() => {
+  /* 調度單：一次全撈的 live query（?status=active），StationDetail / CityMap /
+     DispatchCard 共用同一份快取，不會多打一次。跨輪更新由 useSlotSync 在
+     遮罩解鎖時 invalidate —— 這裡不需要自己輪詢。 */
+  const { data: orders } = useDispatchOrders()
+  const sentBy = useMemo(() => {
+    const m = new Map<string, number>()
+    // 同一站可能有多筆來源單（N 站 → 1 站），要加總不是取代
+    for (const o of orders?.items ?? []) m.set(o.anchor_uid, (m.get(o.anchor_uid) ?? 0) + o.bikes)
+    return m
+  }, [orders])
+
+  // 方向 / 等級先篩；「排除已調派」單獨一層，才算得出被它藏起來幾筆
+  const byScope = useMemo(() => {
     let list = side === 'all' ? all : all.filter((i) => i.side === side)
     if (level !== 'all') list = list.filter((i) => i.level === level)
     return list
   }, [all, side, level])
+
+  const coveredCount = useMemo(
+    () => byScope.filter((i) => coveredBy(i, sentBy)).length,
+    [byScope, sentBy],
+  )
+  const filtered = useMemo(
+    () => (hideCovered ? byScope.filter((i) => !coveredBy(i, sentBy)) : byScope),
+    [byScope, hideCovered, sentBy],
+  )
 
   // 依嚴重度分組（高→中→低，組內維持原排序）；序號在分組後重編，跟畫面上看到的順序一致
   // （不是原陣列位置），組內同一批不夾雜其他嚴重度的站。
@@ -137,6 +172,18 @@ export function AlertList() {
               </button>
             ))}
           </div>
+          {/* 排除已調派：ml-auto 推到這排的右端（換行時落在第二排右端，不會擠壓左邊兩組）。
+              ★ 不放計數在 chip 上 —— 同上一段的體例，數字一律交給下方狀態列，
+                避免畫面上出現兩個定義不同的「N」。 */}
+          <button
+            type="button"
+            onClick={() => setAlertFilter({ hideCovered: !hideCovered })}
+            aria-pressed={hideCovered}
+            title="隱藏建議台數已被既有調度單全數覆蓋的站。派了一部分的站仍會留著（那站還缺車）。"
+            className={cn(segChip(hideCovered), 'ml-auto px-2 py-[3px] text-[0.68rem]')}
+          >
+            排除已調派
+          </button>
         </div>
         <div
           role="status"
@@ -144,6 +191,7 @@ export function AlertList() {
         >
           <span>
             {scopeLabel && `${scopeLabel}・`}共 {filtered.length} 筆待處理
+            {hideCovered && coveredCount > 0 && `（已隱藏 ${coveredCount} 筆已調派）`}
           </span>
           {unloaded > 0 && <span>資料庫另有 {unloaded} 筆，請用地區縮小</span>}
         </div>
@@ -153,7 +201,9 @@ export function AlertList() {
         <div className="p-5 text-[0.8rem] leading-[1.7] text-ink3">
           {all.length === 0
             ? '目前範圍內所有站點供需皆落在健康區間。'
-            : '此篩選條件下沒有待處理站點。'}
+            : hideCovered && coveredCount > 0
+              ? `此篩選條件下的 ${coveredCount} 站都已調派，沒有待處理站點。`
+              : '此篩選條件下沒有待處理站點。'}
         </div>
       ) : (
         <ul className="m-0 list-none p-0">
@@ -172,6 +222,9 @@ export function AlertList() {
                 // 缺車看「可借」、滿站看「空位」——各自真正吃緊的那個數字，跟右欄方向色一致。
                 const capVal = isShort ? it.now.avail : it.now.free
                 const cap = it.capacity ?? 0
+                // 已調派 / 還缺：算式同 coveredBy（頂端）。need 是未扣除的原始建議台數。
+                const sent = sentBy.get(it.station_uid) ?? 0
+                const left = Math.max(0, (it.dispatch?.bikes ?? 0) - sent)
                 const pct = cap > 0 && capVal != null ? Math.min(100, Math.max(0, (capVal / cap) * 100)) : 0
                 // 整列底色：色相＝方向（暖缺車／冷滿站），濃淡＝嚴重度（高風險原色、中風險減半、低風險不上色）
                 // ——沿用既有的 hot-wash/cold-wash token，不另開一套風險專屬色相。
@@ -236,6 +289,16 @@ export function AlertList() {
                             ? `${it.dispatch.action === 'refill' ? '建議補 ' : it.dispatch.action === 'remove' ? '建議取 ' : ''}${it.dispatch.bikes} 台`
                             : '—'}
                         </b>
+                        {/* 已調派：掛在建議台數正下方，因為它修正的就是上面那個數字 ——
+                            「建議取 9 台」本身是 risk_snapshot 的原始值，不會因為派過車而減少
+                            （後端 need = max(0, bikes − already) 是調度 API 才算的，警示不算）。
+                            沿用 StationDetail 的 text-info，全站「已調度／已調派」同一個顏色。 */}
+                        {sent > 0 && (
+                          <span className="block text-[0.68rem] leading-[1.4] text-info">
+                            已調派 <span className="num">{sent}</span> 台
+                            {left > 0 && <span className="text-ink3"> · 還缺 {left}</span>}
+                          </span>
+                        )}
                         {/* 9/12 起 streak 只算高風險——中低風險 hours 恆為 null，不顯示這行
                             （it.streak 物件本身一定存在，判斷式要看 hours 有沒有值，不是看物件存不存在） */}
                         {it.streak?.hours != null && (

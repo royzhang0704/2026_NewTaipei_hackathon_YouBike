@@ -52,8 +52,14 @@ interface SelectionSlice {
 interface AlertFilterSlice {
   alertSide: AlertSide
   alertLevel: AlertLevel
+  /** 「排除已調派」：建議台數已被 active 調度單全數覆蓋的站不列出（見 AlertList.coveredBy）。
+      ★ 只吃全數覆蓋，派一半的站要留著 —— 那站還缺車，從清單上消失等於被遺忘。
+      ★ 不進 KPI：上方統計維持全量，只有下方清單被篩（9/12 使用者定案）。 */
+  alertHideCovered: boolean
   /** 傳 partial：只帶到的欄位會變，沒帶的維持 */
-  setAlertFilter: (f: Partial<{ side: AlertSide; level: AlertLevel }>) => void
+  setAlertFilter: (
+    f: Partial<{ side: AlertSide; level: AlertLevel; hideCovered: boolean }>,
+  ) => void
 }
 
 export const useAppStore = create<SelectionSlice & ThemeSlice & AlertFilterSlice>((set, get) => ({
@@ -103,9 +109,12 @@ export const useAppStore = create<SelectionSlice & ThemeSlice & AlertFilterSlice
 
   alertSide: 'all',
   alertLevel: 'all',
+  alertHideCovered: false,
   setAlertFilter: (f) =>
     set((s) => ({
       alertSide: f.side ?? s.alertSide,
       alertLevel: f.level ?? s.alertLevel,
+      // ?? 而非 || ：hideCovered 是 boolean，用 || 的話關不掉（false 會被吃成舊值）
+      alertHideCovered: f.hideCovered ?? s.alertHideCovered,
     })),
 }))
