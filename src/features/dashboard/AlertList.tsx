@@ -112,14 +112,30 @@ export function AlertList() {
     [byScope, hideCovered, sentBy],
   )
 
-  // 依嚴重度分組（高→中→低，組內維持原排序）；序號在分組後重編，跟畫面上看到的順序一致
+  // 依嚴重度分組（高→中→低）；序號在分組後重編，跟畫面上看到的順序一致
   // （不是原陣列位置），組內同一批不夾雜其他嚴重度的站。
+  //
+  // ★ 9/13：組內不再完全沿用 API 順序 —— 空站改以「已持續多久」為首鍵。
+  //   後端 ORDER_BY（risk_repo）把 streak 排在可借數之後，於是「可借 0 台、
+  //   剛亮燈半小時」會壓過「可借 2 台、已持續 5 小時」，跟調度的急迫感相反。
+  //   這裡**只重排空站**：滿站群維持後端順序（滿站清出來的車正好是附近空站的
+  //   調度來源，先處理滿站等於一次動作緩解兩邊，那層刻意不動）。
+  //   排序鍵用 streak.hours —— 它就是卡片上「已 N 小時」顯示的同一個值
+  //   （後端以 streak_since 換算，比 streak_n 耐漏批）。時數相同時靠
+  //   Array.prototype.sort 的穩定性沿用後端的 可借數 → bikes → onset。
+  //   ⚠ 9/12 起 streak 只算高風險，中低風險 hours 恆為 null（一律視為 0）
+  //     → 實際上只有「高風險」那組會看到順序變化，中低組維持原樣。
   const grouped = useMemo(() => {
     let no = 0
-    return LEVEL_GROUPS.map((g) => ({
-      ...g,
-      rows: filtered.filter((it) => it.level === g.level).map((it) => ({ it, no: ++no })),
-    })).filter((g) => g.rows.length > 0)
+    return LEVEL_GROUPS.map((g) => {
+      const rows = filtered.filter((it) => it.level === g.level)
+      // 後端保證同一等級內滿站已全部排在空站之前，所以照側別切開再接回去不會動到滿站的位置
+      const full = rows.filter((it) => it.side === 'full')
+      const shortage = rows
+        .filter((it) => it.side === 'shortage')
+        .sort((a, b) => (b.streak?.hours ?? 0) - (a.streak?.hours ?? 0))
+      return { ...g, rows: [...full, ...shortage].map((it) => ({ it, no: ++no })) }
+    }).filter((g) => g.rows.length > 0)
   }, [filtered])
 
   // 報讀者狀態訊息：篩選一變、count 一變就唸「（高風險・）空站・共 N 筆待處理」
