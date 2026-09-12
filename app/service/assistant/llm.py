@@ -120,7 +120,9 @@ def _get_client():
 
         _boto_client = boto3.client(
             "bedrock-agentcore",
-            region_name=os.environ.get("AWS_REGION", "ap-northeast-1"),
+            # .env 的 AWS_REGION 一定會覆蓋這個預設值；這裡只是「.env 沒讀到時」的安全網，
+            # 保持跟目前實際在用的帳號/region 一致，避免靜默連到錯的 region 產生難懂的錯誤。
+            region_name=os.environ.get("AWS_REGION", "us-west-2"),
         )
     return _boto_client
 
