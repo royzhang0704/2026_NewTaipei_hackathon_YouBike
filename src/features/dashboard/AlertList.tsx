@@ -6,6 +6,34 @@ import type { AlertItem, RiskLevel } from '@/api/types'
 import { segChip } from '@/components/ui/segChip'
 import { cn } from '@/lib/utils'
 
+/** 滿／空的「徹底程度」＝ 可借數 ÷ 容量。用比例而不是台數，是為了不跟下一鍵的容量
+    重複計入規模 —— 10 席全滿（100%）比 26 席差 1 台（96%）更該先清。
+    資料不全（capacity 為 0／null、或該站本輪沒有觀測值）回 null，排序時墊到最後。 */
+const fillRatio = (i: AlertItem) =>
+  i.capacity && i.now.avail != null ? i.now.avail / i.capacity : null
+
+/** 清單組內的急迫度：① 已持續越久 → ② 越滿／越空 → ③ 站容量越大。
+    ★ ① hours 是後端用 streak_since 換算的，就是卡片上「已 N 小時」（比 streak_n 耐漏批）。
+    ★ ② 方向依 side 反著看：滿站比例越高越該取，空站比例越低越該補。
+         這支只會被套在「全 full」或「全 shortage」的子陣列上，所以看 a.side 就夠。
+    ★ ③ 同樣卡了 1 小時、滿得一樣徹底，就大站先 —— 影響的人次多。
+    ★ 中低風險的 hours 恆為 null（9/12 起 streak 只算高風險）→ ① 對它們全是 0，那兩組
+      實際上是從②開始排；要讓中低組維持後端原順序，把這支包一層
+      `a.level === 'high' ? … : 0` 即可。
+    ★ 三鍵都打平就回 0，靠 Array.prototype.sort 的穩定性沿用後端的 bikes → onset。 */
+const byUrgency = (a: AlertItem, b: AlertItem) => {
+  const h = (b.streak?.hours ?? 0) - (a.streak?.hours ?? 0)
+  if (h) return h
+  const ra = fillRatio(a)
+  const rb = fillRatio(b)
+  if (ra !== rb) {
+    if (ra == null) return 1                       // 資料不全的墊底，不要插在前面誤導
+    if (rb == null) return -1
+    return a.side === 'full' ? rb - ra : ra - rb
+  }
+  return (b.capacity ?? 0) - (a.capacity ?? 0)
+}
+
 const SIDES: { key: AlertSide; label: string }[] = [
   { key: 'all', label: '全部' },
   { key: 'shortage', label: '空站' },
@@ -115,25 +143,23 @@ export function AlertList() {
   // 依嚴重度分組（高→中→低）；序號在分組後重編，跟畫面上看到的順序一致
   // （不是原陣列位置），組內同一批不夾雜其他嚴重度的站。
   //
-  // ★ 9/13：組內不再完全沿用 API 順序 —— 空站改以「已持續多久」為首鍵。
+  // ★ 9/13：組內不再沿用 API 順序 —— 改以「已持續多久 → 越滿／越空 → 站容量」排
+  //   （滿站、空站各自排，方向見 byUrgency）。
   //   後端 ORDER_BY（risk_repo）把 streak 排在可借數之後，於是「可借 0 台、
   //   剛亮燈半小時」會壓過「可借 2 台、已持續 5 小時」，跟調度的急迫感相反。
-  //   這裡**只重排空站**：滿站群維持後端順序（滿站清出來的車正好是附近空站的
-  //   調度來源，先處理滿站等於一次動作緩解兩邊，那層刻意不動）。
-  //   排序鍵用 streak.hours —— 它就是卡片上「已 N 小時」顯示的同一個值
-  //   （後端以 streak_since 換算，比 streak_n 耐漏批）。時數相同時靠
-  //   Array.prototype.sort 的穩定性沿用後端的 可借數 → bikes → onset。
-  //   ⚠ 9/12 起 streak 只算高風險，中低風險 hours 恆為 null（一律視為 0）
-  //     → 實際上只有「高風險」那組會看到順序變化，中低組維持原樣。
+  //   側別分層保留：滿站整組仍在空站之前（滿站清出來的車正好是附近空站的調度
+  //   來源，先處理滿站等於一次動作緩解兩邊）—— 動的只是每一側**組內**的順序。
+  //   排序鍵見 byUrgency；三鍵都平才沿用後端的 bikes → onset（靠 sort 的穩定性，
+  //   不自己重排）。
+  //   ⚠ 中低風險的 hours 恆為 null（9/12 起 streak 只算高風險）→ 那兩組等於從
+  //     「越滿／越空」開始排；只想動高風險組的話看 byUrgency 上的註記。
   const grouped = useMemo(() => {
     let no = 0
     return LEVEL_GROUPS.map((g) => {
       const rows = filtered.filter((it) => it.level === g.level)
-      // 後端保證同一等級內滿站已全部排在空站之前，所以照側別切開再接回去不會動到滿站的位置
-      const full = rows.filter((it) => it.side === 'full')
-      const shortage = rows
-        .filter((it) => it.side === 'shortage')
-        .sort((a, b) => (b.streak?.hours ?? 0) - (a.streak?.hours ?? 0))
+      // 後端保證同一等級內滿站已全部排在空站之前，所以照側別切開再接回去不會打亂側別分層
+      const full = rows.filter((it) => it.side === 'full').sort(byUrgency)
+      const shortage = rows.filter((it) => it.side === 'shortage').sort(byUrgency)
       return { ...g, rows: [...full, ...shortage].map((it) => ({ it, no: ++no })) }
     }).filter((g) => g.rows.length > 0)
   }, [filtered])
