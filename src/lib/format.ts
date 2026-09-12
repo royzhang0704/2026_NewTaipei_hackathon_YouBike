@@ -23,6 +23,11 @@ export function parseServerTs(ts: string | null | undefined): Date | null {
   return Number.isNaN(d.getTime()) ? null : d
 }
 
+/** Date -> "05/02 00:30"（mdhm 的 Date 版；前端自己算出來的格沒有後端字串可用）*/
+export function mdhmOf(d: Date): string {
+  return `${p2(d.getMonth() + 1)}/${p2(d.getDate())} ${p2(d.getHours())}:${p2(d.getMinutes())}`
+}
+
 /** Date -> "05/02 00:30:45" */
 export function fmtClock(d: Date): string {
   return `${p2(d.getMonth() + 1)}/${p2(d.getDate())} ${p2(d.getHours())}:${p2(d.getMinutes())}:${p2(d.getSeconds())}`

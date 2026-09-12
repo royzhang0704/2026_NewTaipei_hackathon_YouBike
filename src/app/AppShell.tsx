@@ -4,7 +4,7 @@ import { useDebounceValue } from 'usehooks-ts'
 import { useIsFetching } from '@tanstack/react-query'
 import { Loader2, Moon, Sun } from 'lucide-react'
 import { useHealth } from '@/api/queries'
-import { fmtClock, isReplayMode, mdhm } from '@/lib/format'
+import { fmtClock, isReplayMode, mdhm, parseServerTs } from '@/lib/format'
 import { useServerClock } from '@/hooks/useServerClock'
 import { useSlotSync } from '@/hooks/useSlotSync'
 import { useAppStore, type FontScale } from '@/stores/useAppStore'
@@ -14,6 +14,9 @@ import { PredictingOverlay } from '@/components/PredictingOverlay'
 import { AssistantWidget } from '@/features/assistant/AssistantWidget'
 import { UserMenu } from '@/features/auth/UserMenu'
 import { cn } from '@/lib/utils'
+
+// 批次預測一格 = 30 分（同 useSlotSync）。遮罩的「跨格」判定用它。
+const SLOT_MS = 30 * 60 * 1000
 
 const FONT_STEPS: { key: FontScale; label: string }[] = [
   { key: 'sm', label: '小' },
@@ -45,9 +48,34 @@ export function AppShell() {
   const clock = isError ? '離線' : time ? fmtClock(time) : '—'
   const dot = isError ? 'bg-ink3' : replaying ? 'bg-cold' : 'bg-hot'
 
-  /* 後端正在現算這一格 → 全頁遮罩（計劃 §3-4）。
-     ★ 判定只看這個欄位，不摻前端狀態 —— 遮罩的唯一真相在後端。 */
-  const predicting = health?.predicting_origin ?? null
+  /* ── 全頁遮罩的判定（計劃 §3-4，2026-09-12 三修）─────────────────
+     規則：**跨過 30 分格就先鎖，拿到新資料才開。**
+
+     鎖的起點由前端的虛擬時鐘決定，開的條件只看後端：
+       鎖 ← 虛擬時鐘已走進一個「資料還沒搬過來」的格（floor(now) > current_slot）
+            或 後端明說正在推進（predicting_origin）
+       開 ← 兩者皆否：書籤追上了，而且迴圈不在推進中
+
+     ★ 為什麼不能只看 predicting_origin：那是後端**開始推進之後**才寫的。
+       回放迴圈最多睡 2 秒才醒、前端再輪詢幾秒才看到，中間那段畫面正是
+       「時鐘已經走進新的一格、資料還停在上一格」的錯位狀態 —— 使用者看到
+       的閃動就是它。前端自己知道時鐘跨格了，不必等後端通知。
+
+     ⚠ 三道護欄，少一道就會鎖死：
+       ① replaying：非 demo 不鎖（真實時間沒有回放迴圈會推進書籤，
+          tick.py 已刪、crontab 已清空 —— 不擋的話真實模式開畫面就是黑的）
+       ② scheduler_on：總開關關著時書籤本來就不會動，不該鎖
+       ③ 停表（demo_until 到點）時鐘不走 → 不會跨格 → 自然不鎖，不必特判 */
+  const curSlotMs = parseServerTs(health?.current_slot)?.getTime() ?? null
+  const crossedMs =
+    replaying && (health?.scheduler_on ?? false) && time && curSlotMs !== null
+      ? Math.floor(time.getTime() / SLOT_MS) * SLOT_MS
+      : null
+  const lockAt =
+    parseServerTs(health?.predicting_origin) ??
+    (crossedMs !== null && curSlotMs !== null && crossedMs > curSlotMs
+      ? new Date(crossedMs)
+      : null)
 
   const dataTo = health?.current_slot ? mdhm(health.current_slot) : null
   const fcTo = health?.forecast_end ? mdhm(health.forecast_end) : null
@@ -165,7 +193,7 @@ export function AppShell() {
       <ShortcutsHelp />
       <AssistantWidget />
       {/* ★ 放在最後、z-50：要蓋住頂欄、抽屜與助理浮層。 */}
-      <PredictingOverlay origin={predicting} speed={health?.demo_speed ?? null} />
+      <PredictingOverlay at={lockAt} speed={health?.demo_speed ?? null} />
 
       <style>{`
         @keyframes beat { 50% { opacity: 0.25 } }
