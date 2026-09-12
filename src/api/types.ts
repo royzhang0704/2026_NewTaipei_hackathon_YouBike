@@ -123,6 +123,16 @@ export interface AlertStreak {
   hours: number
 }
 
+/** 空站建議調車來源——city-wide 找最近的可調出滿站（5km 內），沒有就是 null（改由調度中心備車補入）。
+    只有 side==='shortage' 的 item 才會有值；滿站本身就是調出點，沒有這個欄位。 */
+export interface AlertDonor {
+  station_uid: string
+  name: string
+  town: string
+  bikes: number
+  dist_m: number
+}
+
 export interface AlertItem {
   station_uid: string
   name: string
@@ -139,6 +149,7 @@ export interface AlertItem {
   baseline: number | null
   streak: AlertStreak | null
   dispatch: Dispatch | null
+  donor?: AlertDonor | null
 }
 
 export interface AlertsSummary {

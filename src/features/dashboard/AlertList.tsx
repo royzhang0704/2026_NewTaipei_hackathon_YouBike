@@ -172,22 +172,27 @@ export function AlertList() {
                     <span className="mt-[2px] block whitespace-nowrap text-[0.73rem] tracking-[0.04em] text-ink3">
                       {it.town}　·　{LV[it.level]}風險
                     </span>
+                    {/* 空站才有「建議調車來源」——滿站本身就是調出點，沒有這個概念，維持顯示可借 */}
                     <span className="mt-[1px] block whitespace-nowrap text-[0.73rem] tracking-[0.04em] text-ink3">
-                      可借 {it.now.avail ?? '—'}／{it.capacity ?? '?'}
+                      {it.side === 'shortage'
+                        ? it.donor
+                          ? `建議從「${it.donor.name}」調車`
+                          : '建議由調度中心備車補入'
+                        : `可借 ${it.now.avail ?? '—'}／${it.capacity ?? '?'}`}
                     </span>
                   </span>
                   <span className="whitespace-nowrap text-right text-[0.7rem] leading-[1.4] tracking-[0.04em] text-ink3">
-                    {/* 調度台數＝這列的行動數字：上色（缺車暖／滿站冷），方向也靠「補 / 取」字 */}
-                    <b
-                      className={cn(
-                        'num block text-[1rem] tracking-[-0.02em]',
-                        it.side === 'shortage' ? 'text-hot' : 'text-cold',
-                      )}
-                    >
-                      {it.dispatch
-                        ? `${it.dispatch.action === 'refill' ? '建議補 ' : it.dispatch.action === 'remove' ? '建議取 ' : ''}${it.dispatch.bikes} 台`
-                        : '—'}
-                    </b>
+                    {/* 空站：右欄改顯示可借數（原本補幾台的位置換成左欄的調車來源）；
+                        滿站：維持原本「建議取 N 台」，取車不需要調車來源這個概念 */}
+                    {it.side === 'shortage' ? (
+                      <b className="num block text-[1rem] tracking-[-0.02em] text-hot">
+                        可借 {it.now.avail ?? '—'}／{it.capacity ?? '?'}
+                      </b>
+                    ) : (
+                      <b className="num block text-[1rem] tracking-[-0.02em] text-cold">
+                        {it.dispatch ? `建議取 ${it.dispatch.bikes} 台` : '—'}
+                      </b>
+                    )}
                     {it.streak && <span>已 {it.streak.hours} 小時</span>}
                   </span>
                 </button>
