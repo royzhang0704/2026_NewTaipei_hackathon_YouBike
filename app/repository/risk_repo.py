@@ -21,9 +21,19 @@ COLS = ("run_id", "origin", "station_uid", "status", "level_n", "shortage_n", "f
         "action", "bikes", "basis", "streak_n", "streak_since", "algo_ver")
 
 # 排序（固定，不開放參數）：
-#   高>中>低 是第一鍵；streak 當第二鍵 —— 連 6 輪（3 小時）沒改善的站
-#   要排在剛亮燈的站前面，這正是記 streak 的用途。
-ORDER_BY = ("ORDER BY r.level_n DESC, r.streak_n DESC, r.bikes DESC NULLS LAST, "
+#   ① 高>中>低 風險等級——完整分級，不是只分「高不高」二元，維持最上層，
+#      保證真正緊急的站永遠不會被同風險等級以外的排序條件蓋過去。
+#   ② 同一風險等級內，滿站排在空站前面——滿站清出來的車同時是附近空站的
+#      調度來源（見 alert_service 的 donor 功能），先處理滿站等於一次動作
+#      緩解兩邊問題。
+#   ③ 可借車輛——方向依 side 而定：滿站是「可借越多代表越滿越急」，
+#      空站是「可借越少代表越缺越急」，同一個「可借」數字兩種站要反著看。
+#   ④ streak 當第四鍵——連 6 輪（3 小時）沒改善的站要排在剛亮燈的站前面。
+#   ⑤⑥ bikes / onset 當最後的 tie-break（原本第二三鍵，現在往後挪）。
+ORDER_BY = ("ORDER BY r.level_n DESC, "
+            "(r.side = 'full') DESC, "
+            "(CASE WHEN r.side = 'full' THEN r.now_avail ELSE -r.now_avail END) DESC NULLS LAST, "
+            "r.streak_n DESC, r.bikes DESC NULLS LAST, "
             "r.onset ASC, r.station_uid")
 
 

@@ -83,8 +83,27 @@ def _summ_block(summary: dict, items: list[dict]) -> dict:
     }
 
 
+_LV_RANK = {"high": 3, "mid": 2, "low": 1, "none": 0}
+
+
+def _balanced_key(i: dict) -> tuple:
+    lv = _LV_RANK.get(i.get("level"), 0)
+    streak_n = (i.get("streak") or {}).get("n") or 0
+    bikes = (i.get("dispatch") or {}).get("bikes") or 0
+    return (-lv, -streak_n, -bikes)
+
+
+def _balanced(items: list[dict]) -> list[dict]:
+    """alert_service 現在回傳的順序是「同風險等級內滿站優先」（給主控台清單頁用的分組排序，
+    見 risk_repo.ORDER_BY）；但這裡的『最優先處理』『待處理站』要看『不分方向、真的最急的』，
+    直接沿用會被同一批滿站洗版、擠掉空站代表。這裡重排回「高>中>低 → streak → 建議台數」，
+    不分側，這才是助理資料包一路以來的語意——凡是取 rows[0] 或 _urgent_list() 之前，
+    都要先過這一手。"""
+    return sorted(items, key=_balanced_key)
+
+
 def _urgent_list(items: list[dict], n: int = 8) -> list[dict]:
-    """items 已由 alert_service 排好序（高>中>低、streak、台數、onset）；照原序取前 n。"""
+    """items 要先過 _balanced()；這裡單純取前 n。"""
     return [
         {"name": i["name"], "方向": C.SIDE_WORD.get(i["side"], i["side"]),
          "等級": C.LV_WORD.get(i["level"], i["level"]),
@@ -172,7 +191,7 @@ def _pkg_compare(named: list[dict], city_items: list[dict]) -> tuple[dict, list[
     buttons: list[dict] = []
     for t in named[:4]:
         d = alert_service.alerts(town_code=t["town_code"], limit=1000)
-        rows = d["items"]
+        rows = _balanced(d["items"])
         cmp.append({
             "name": t["town"],
             **_counts(rows),
@@ -193,7 +212,7 @@ def _pkg_district(sc: "Scope", ctx: dict, towns: list[dict],
     named = sc.named[0] if sc.named else None
     tc = named["town_code"] if named else ctx.get("town_code")
     d = alert_service.alerts(town_code=tc, limit=1000)
-    drows = d["items"]
+    drows = _balanced(d["items"])
     t = next((x for x in towns if x["town_code"] == tc), None)
     blk: dict = {
         "name": (t["town"] if t else tc),
@@ -217,7 +236,7 @@ def _pkg_district(sc: "Scope", ctx: dict, towns: list[dict],
 
 
 def _pkg_city(sc: "Scope", city_alerts: dict) -> tuple[dict, list[dict]]:
-    items = city_alerts["items"]
+    items = _balanced(city_alerts["items"])
     blk: dict = {**_summ_block(city_alerts["summary"], items),
                  "最優先處理": (items[0]["name"] if items else None),
                  "待處理站(依優先序)": _urgent_list(items)}
