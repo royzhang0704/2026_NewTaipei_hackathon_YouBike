@@ -241,27 +241,48 @@ def write_risk(origin: datetime, algo_ver: str = None) -> dict:
             d = rk["dispatch"] or {}
             act, bikes, basis = d.get("action"), d.get("bikes"), d.get("basis")
 
-        # ── streak 遞推（9/1 定案：overall 口徑，不分缺車／滿站兩側）──
+        # ── streak 遞推（9/12 改口徑：只算高風險 level_n = 3）──
+        # ★ 原本是 overall（level_n >= 1）。中低風險的定義是「預測 1~3 小時
+        #   內會越線」，會隨每輪預測擺動反覆亮滅，持續時數沒有調度意義；
+        #   要盯的是「現況已越線、而且連續幾輪都沒被處理」。
+        #   口徑變了 RISK_ALGO_VER 必須跟著換（v1 → v2），否則舊的 overall
+        #   streak 會被 same_ver 直接接上來。
         p = prv.get(uid)
         same_ver = bool(p and p["algo_ver"] == algo_ver)
         if status == "no_forecast":
             # ★ 不歸零也不遞增：漏打一站不代表風險消失，但也沒有證據說又持續了一輪
             streak_n = p["streak_n"] if same_ver else 0
             streak_since = p["streak_since"] if same_ver else None
-        elif lv >= 1:
-            # 上一輪有風險（含「上一輪漏批但更早之前有風險」的延續）才累加
-            cont = same_ver and (p["level_n"] or 0) >= 1
+        elif lv == 3:
+            # 上一輪也是高風險（含「上一輪漏批但更早之前是高風險」的延續）才累加
+            cont = same_ver and p["level_n"] == 3
             cont = cont or (same_ver and p["status"] == "no_forecast" and p["streak_n"] >= 1)
             streak_n = (p["streak_n"] + 1) if cont else 1
             streak_since = (p["streak_since"] or origin) if cont else origin
         else:
             streak_n, streak_since = 0, None
 
+        # ── 水位停滯遞推（9/12 新增）——「可借數停在同一個值多久」──
+        # ★ 刻意不吃 same_ver：水位有沒有動跟風險演算法無關，換版把停滯
+        #   時數歸零是錯的。這是與 streak 各自獨立的第二套遞推。
+        # ★ now_carried（該輪無觀測、延用前值）不特別處理 —— carry-forward
+        #   本來就會給出相同的 avail，自然累加，而「這站沒回報」與「水位
+        #   不動」本來就是同一件事的兩種表現，正是這兩欄要抓的目標。
+        if cur_avail is None:
+            # 錨點連一格實測都查不到（該站從沒進過 level30）：凍結沿用
+            stale_avail = p["stale_avail"] if p else None
+            stale_since = p["stale_since"] if p else None
+        elif p and p["stale_avail"] == cur_avail and p["stale_since"]:
+            stale_avail, stale_since = cur_avail, p["stale_since"]
+        else:
+            stale_avail, stale_since = cur_avail, origin
+
         rows.append((run_ids.get(uid), origin, uid, status, lv,
                      risk_service.LEVEL_N[sh["level"]] if sh else None,
                      risk_service.LEVEL_N[fu["level"]] if fu else None,
                      side, confl, conf, thr, onset, cur_avail, carried, crossed,
-                     base, act, bikes, basis, streak_n, streak_since, algo_ver))
+                     base, act, bikes, basis, streak_n, streak_since,
+                     stale_avail, stale_since, algo_ver))
 
         key = {None: "risk_no_forecast", 3: "risk_high", 2: "risk_mid",
                1: "risk_low", 0: "risk_none"}[lv]

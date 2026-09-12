@@ -10,7 +10,14 @@
 #
 # ★ 排序固定不開放參數：level_n DESC, streak_n DESC, bikes DESC, onset ASC。
 #   streak 當第二鍵是它的用途 —— 連 6 輪（3 小時）沒改善的站，
-#   要排在剛亮燈的站前面。
+#   要排在剛亮燈的站前面。9/12 起 streak 只計高風險，所以這一鍵實際上
+#   只在高風險群組內起作用（中低的 streak_n 恆為 0，退化成以 bikes 排）。
+#
+# ★ 每個 item 有**兩個**持續時數，不要混用：
+#     streak.hours —— 連續高風險幾小時（風險側，吃 algo_ver 換版重算）
+#     stale.hours  —— 可借數停在同一個值幾小時（資料側，不吃 algo_ver）
+#   後者用來辨識卡住／疑似斷線的站：水位一動也不動，比風險燈號更早
+#   透露「這站的資料或車輛都沒在流動」。
 # ════════════════════════════════════════════════════════════
 import os
 
@@ -30,9 +37,17 @@ def _ts(v):
     return v.strftime(_TS) if v else None
 
 
+def _hours(origin, since):
+    """since → 已持續幾小時。streak 與水位停滯共用同一套換算。
+
+    ★ +0.5 是補回「本輪自己代表的那半小時」—— 剛亮燈（since = origin）
+      顯示 0.5 而不是 0。用時間差而不是輪數，是為了耐漏批。
+    """
+    return round((origin - since).total_seconds() / 3600 + 0.5, 1) if since else None
+
+
 def _item(r: dict, origin) -> dict:
     cap, avail = r["capacity"], r["now_avail"]
-    since = r["streak_since"]
     return {
         "station_uid": r["station_uid"], "name": r["station_name"],
         "town_code": r["town_code"], "town": r["town"], "capacity": cap,
@@ -44,9 +59,13 @@ def _item(r: dict, origin) -> dict:
                 "carried": r["now_carried"], "crossed": r["now_crossed"]},
         "baseline": round(r["baseline"], 2) if r["baseline"] is not None else None,
         # 持續時數用 streak_since 換算，比「連續 N 輪」耐漏批
-        "streak": {"n": r["streak_n"], "since": _ts(since),
-                   "hours": round((origin - since).total_seconds() / 3600 + 0.5, 1)
-                            if since else None},
+        # ★ 9/12 起只計高風險：中低風險的 n 恆為 0、hours 恆為 null
+        "streak": {"n": r["streak_n"], "since": _ts(r["streak_since"]),
+                   "hours": _hours(origin, r["streak_since"])},
+        # 水位停滯：可借數停在同一個值多久 —— 卡住／疑似斷線的站
+        # ★ 與 dispatch.action 的 hold（預計自行消退）無關，刻意不共用字眼
+        "stale": {"avail": r["stale_avail"], "since": _ts(r["stale_since"]),
+                  "hours": _hours(origin, r["stale_since"])},
         "dispatch": ({"action": r["action"], "bikes": r["bikes"],
                       "basis": r["basis"]} if r["action"] else None),
     }
@@ -146,6 +165,8 @@ def station_risk(uid: str, n: int = 48) -> dict:
                      "level": LEVEL[r["level_n"]] if r["level_n"] is not None else None,
                      "side": r["side"], "streak_n": r["streak_n"],
                      "streak_since": _ts(r["streak_since"]),
+                     "stale_avail": r["stale_avail"],
+                     "stale_since": _ts(r["stale_since"]),
                      "now_avail": r["now_avail"], "threshold": r["threshold"],
                      "action": r["action"], "bikes": r["bikes"]} for r in rows],
     }
