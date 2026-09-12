@@ -185,7 +185,7 @@ export function AlertList() {
                       )}
                     >
                       {it.dispatch
-                        ? `${it.dispatch.action === 'refill' ? '補 ' : it.dispatch.action === 'remove' ? '取 ' : ''}${it.dispatch.bikes} 台`
+                        ? `${it.dispatch.action === 'refill' ? '建議補 ' : it.dispatch.action === 'remove' ? '建議取 ' : ''}${it.dispatch.bikes} 台`
                         : '—'}
                     </b>
                     {it.streak && <span>已 {it.streak.hours} 小時</span>}

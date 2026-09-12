@@ -368,7 +368,7 @@ export function CityMap() {
             {hover.bikes ? (
               <>
                 <br />
-                {hover.action === 'refill' ? '補車' : '取車'} {hover.bikes} 台
+                {hover.action === 'refill' ? '建議補車' : '建議取車'} {hover.bikes} 台
               </>
             ) : null}
           </Popup>
