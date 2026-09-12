@@ -171,23 +171,20 @@ export function AlertList() {
                       {it.name}
                     </span>
                   </span>
-                  <span className="whitespace-nowrap text-right text-[0.7rem] leading-[1.4] tracking-[0.04em] text-ink3">
+                  <span className="whitespace-nowrap text-right tracking-[0.04em] text-ink3">
                     {/* 右欄固定 3 行：可借 X／Y ／ 建議補／取 N 台 ／ 已 X 小時。
-                        缺車/滿站方向靠「補 / 取」字與上色（暖／冷）表示，不再需要風險等級文字。 */}
-                    <span className="block">
+                        前兩行同字級；已 X 小時較小；先不上色（暖／冷），之後要加再說。 */}
+                    <b className="num block text-[1rem] tracking-[-0.02em]">
                       可借 {it.now.avail ?? '—'}／{it.capacity ?? '?'}
-                    </span>
-                    <b
-                      className={cn(
-                        'num block text-[1rem] tracking-[-0.02em]',
-                        it.side === 'shortage' ? 'text-hot' : 'text-cold',
-                      )}
-                    >
+                    </b>
+                    <b className="num block text-[1rem] tracking-[-0.02em]">
                       {it.dispatch
                         ? `${it.dispatch.action === 'refill' ? '建議補 ' : it.dispatch.action === 'remove' ? '建議取 ' : ''}${it.dispatch.bikes} 台`
                         : '—'}
                     </b>
-                    {it.streak && <span>已 {it.streak.hours} 小時</span>}
+                    {it.streak && (
+                      <span className="block text-[0.68rem] leading-[1.4]">已 {it.streak.hours} 小時</span>
+                    )}
                   </span>
                 </button>
               </li>
