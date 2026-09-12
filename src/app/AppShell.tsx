@@ -165,7 +165,7 @@ export function AppShell() {
       <ShortcutsHelp />
       <AssistantWidget />
       {/* ★ 放在最後、z-50：要蓋住頂欄、抽屜與助理浮層。 */}
-      <PredictingOverlay origin={predicting} />
+      <PredictingOverlay origin={predicting} speed={health?.demo_speed ?? null} />
 
       <style>{`
         @keyframes beat { 50% { opacity: 0.25 } }
