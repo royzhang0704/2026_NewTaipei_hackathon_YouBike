@@ -133,7 +133,9 @@ def stage_predict(origin: datetime) -> str:
         print(f"   ⏬ 這一格要現算 → 時鐘 ×{before:g} 降為 ×1"
               "（定案：就此維持 1x，要回快轉請另開終端下 --speed N）")
 
-    sc.set_predicting(origin)           # ★ 前端全頁遮罩開
+    # ★ 遮罩不在這裡開關了（9/12 二修）——改由 step() 包住整格。
+    #   這裡自己開關的話，②做完到③做完之間會有一段沒遮罩的空窗，
+    #   而那正是 risk_snapshot 被刪掉重寫的時候。
     try:
         from jobs import batch_predict
         print(f"   ② 預測：現算 → {batch_predict.run(origin, stages='predict')}")
@@ -141,8 +143,6 @@ def stage_predict(origin: datetime) -> str:
     except Exception as e:              # noqa: BLE001
         print(f"   ② ⚠ 預測失敗（本輪其他階段照走）{type(e).__name__}: {e}")
         return "failed"
-    finally:
-        sc.set_predicting(None)         # ★ 遮罩關 —— 放 finally，例外也要關
 
 
 def stage_risk(origin: datetime) -> bool:
@@ -232,19 +232,31 @@ def step() -> bool:
         # copy_range 一次整段搬齊，不需要另一支 job 回補。
         print(f"   ⚠ 落後 {behind}（不只一格）：連中間的洞一併回放")
 
-    # ── ① 搬資料 ──
-    ok, msg = replay_pull.run(expected, since=latest)
-    if not ok:
-        # 覆蓋率不足（該 slot 當年整片缺觀測）。書籤已在 replay_pull 裡前進，
-        # 不然迴圈會每 2 秒重試同一個壞 slot，永遠卡住。
-        print(f"   ① 搬資料未成功：{msg} → 這一格不做②③④")
-        return True
+    # ★★ 2026-09-12 二修：遮罩改成涵蓋**整格**，不再只蓋②現算那一段。
+    #   原本只有「要打 endpoint」才開遮罩，於是已經有預測的格會直接放行 ——
+    #   但③會先 DELETE 這個 origin 的整輪 risk_snapshot 再重判，那幾秒
+    #   /alerts 讀到的是空的或半套快照，畫面閃一下空白警示；④收單同理。
+    #   使用者回報「即便沒有預測，風險／調度還是會卡住一下」就是這個。
+    #   ⇒ 從①搬資料到④收單全部包起來，前端在這段期間一律 loading。
+    sc.set_predicting(expected)
+    try:
+        # ── ① 搬資料 ──
+        ok, msg = replay_pull.run(expected, since=latest)
+        if not ok:
+            # 覆蓋率不足（該 slot 當年整片缺觀測）。書籤已在 replay_pull 裡前進，
+            # 不然迴圈會每 2 秒重試同一個壞 slot，永遠卡住。
+            print(f"   ① 搬資料未成功：{msg} → 這一格不做②③④")
+            return True
 
-    # ── ②③④ ──
-    stage_predict(expected)
-    risk_ok = stage_risk(expected)
-    stage_dispatch(expected, risk_ok)
-    return True
+        # ── ②③④ ──
+        stage_predict(expected)
+        risk_ok = stage_risk(expected)
+        stage_dispatch(expected, risk_ok)
+        return True
+    finally:
+        # ★ 放 finally：任何一階段炸掉都要關遮罩，否則畫面永遠鎖著。
+        #   （另一道保險是 sys_config_repo.predicting 的 TTL 自癒。）
+        sc.set_predicting(None)
 
 
 # ── 常駐迴圈 ──────────────────────────────────────────────────

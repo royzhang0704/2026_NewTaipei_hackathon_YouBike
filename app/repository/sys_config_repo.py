@@ -55,7 +55,10 @@ _TS = "%Y-%m-%d %H:%M:%S"
 # 遮罩的保險絲：demo_predicting 距今超過這麼久（真實分鐘）就當作殘留。
 # ★ 迴圈被 kill -9 時這個鍵會留著 → 前端遮罩永遠不關、demo 直接開天窗。
 #   一輪 1,600 站的預測跑不到 10 分鐘，超過就是沒人來清。
-PREDICTING_TTL_MIN = 10
+# ★ 2026-09-12 二修：10 → 15。遮罩改成涵蓋整格（搬資料＋預測＋風險＋收單，
+#   見 jobs/demo.py step()），最長那一輪比純預測久。TTL 若在推進中途燒斷，
+#   遮罩會提早關掉、露出正在被刪掉重寫的 risk_snapshot —— 正是要避免的事。
+PREDICTING_TTL_MIN = 15
 
 
 def get(key: str) -> str | None:
