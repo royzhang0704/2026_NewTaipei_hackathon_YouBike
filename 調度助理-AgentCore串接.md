@@ -170,8 +170,7 @@ proxy 不給 LLM 工具權限，而是**把查好的資料寫成文字，當使�
 | Harness | `imsoft_ubike_agentcore_harness`，model：Amazon Nova 2 Lite |
 | Harness ARN | `arn:aws:bedrock-agentcore:ap-northeast-1:597671487936:harness/imsoft_ubike_agentcore_harness-ZBEN5wmyW5` |
 
-- KB 內容 = `backend/kb/01~03-*.md`（`_harness_system_prompt.txt` 是 Harness 的 system prompt，不進 KB；
-  原本還有一份 `04-命題背景與系統架構.md`，已移除不用）。
+- KB 內容 = `backend/kb/01~03-*.md`（`_harness_system_prompt.txt` 是 Harness 的 system prompt，不進 KB）。
 - Harness playground 已實測：問「調度台數為什麼不是補到剛好脫離紅區」會呼叫 `Kb-Target Retrieve`、回答引用 `02` / `03` 文件。
 
 改 KB 內容的流程：改 `backend/kb/*.md` → 重新上傳到 S3 bucket → KB 頁面按 Sync。
