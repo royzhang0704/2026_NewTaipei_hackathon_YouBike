@@ -15,10 +15,15 @@ export interface Health {
   forecast_left_min: number | null
   last_tick: string | null
   tick_age_min: number | null
-  /** demo 回放走到 demo_until 之後的續走倍率；1 = 即時。
-      ★ 調度只在 1x 開放（見 StationDetail 的入口按鈕）。 */
-  demo_tail_speed?: number | null
-  demo_auto_slow?: boolean
+  /** demo 回放流速；1 = 即時，0 = 停表，null = 非 demo。
+      ★ 2026-09-12 起取代 demo_tail_speed —— 流速搬進 DB，來源只剩一個
+        （後端 sys_config.demo_speed）。調度只在 ≤1 開放（見 StationDetail）。 */
+  demo_speed?: number | null
+  /** 非 null = 後端正在現算這一格的預測 → 前端上全頁遮罩。
+      ★ 後端有 TTL 自癒（迴圈被 kill 之後會自己回 null），前端不必再設逾時。 */
+  predicting_origin?: string | null
+  /** 開始現算的**真實**時間（診斷用，畫面不顯示）。 */
+  predicting_since?: string | null
 }
 
 export interface Town {

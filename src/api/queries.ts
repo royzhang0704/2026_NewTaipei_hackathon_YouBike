@@ -26,8 +26,10 @@ export function useHealth() {
   return useQuery({
     queryKey: qk.health,
     queryFn: ({ signal }) => api<Health>('/api/v1/healthz', { signal }),
-    // 短間隔：頭欄時鐘靠連續兩次 now 推算流速，後端調速度最多 8 秒就跟上
-    refetchInterval: 8_000,
+    /* 短間隔：頭欄時鐘靠連續兩次 now 推算流速，後端調速度最多 8 秒就跟上。
+       ★ 現算中（predicting_origin 非 null）縮到 2s —— 全頁遮罩靠這支的回應
+         關閉，維持 8s 的話評審會看到「算完了畫面還鎖著」最多 8 秒。 */
+    refetchInterval: (q) => (q.state.data?.predicting_origin ? 2_000 : 8_000),
     staleTime: 6_000,
   })
 }

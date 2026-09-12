@@ -10,6 +10,7 @@ import { useSlotSync } from '@/hooks/useSlotSync'
 import { useAppStore, type FontScale } from '@/stores/useAppStore'
 import { ShortcutsHelp } from '@/components/ShortcutsHelp'
 import { ErrorBoundary } from '@/components/ErrorBoundary'
+import { PredictingOverlay } from '@/components/PredictingOverlay'
 import { AssistantWidget } from '@/features/assistant/AssistantWidget'
 import { UserMenu } from '@/features/auth/UserMenu'
 import { cn } from '@/lib/utils'
@@ -43,6 +44,10 @@ export function AppShell() {
   const fast = replaying && speed >= 1.3
   const clock = isError ? '離線' : time ? fmtClock(time) : '—'
   const dot = isError ? 'bg-ink3' : replaying ? 'bg-cold' : 'bg-hot'
+
+  /* 後端正在現算這一格 → 全頁遮罩（計劃 §3-4）。
+     ★ 判定只看這個欄位，不摻前端狀態 —— 遮罩的唯一真相在後端。 */
+  const predicting = health?.predicting_origin ?? null
 
   const dataTo = health?.current_slot ? mdhm(health.current_slot) : null
   const fcTo = health?.forecast_end ? mdhm(health.forecast_end) : null
@@ -159,6 +164,8 @@ export function AppShell() {
 
       <ShortcutsHelp />
       <AssistantWidget />
+      {/* ★ 放在最後、z-50：要蓋住頂欄、抽屜與助理浮層。 */}
+      <PredictingOverlay origin={predicting} />
 
       <style>{`
         @keyframes beat { 50% { opacity: 0.25 } }

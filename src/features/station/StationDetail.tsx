@@ -41,11 +41,15 @@ function DispatchEntry({
        —— 不能讓使用者問完 Bedrock、勾完選才被擋。
        （60x 回放下一格 = 30 真實秒，讀完文案早已跨輪，寫入必定 DISPATCH_STALE。）
 
-     ★ 0 與 1 都放行：計劃原訂「只有 1x」，但 demo_tail_speed = 0 的語意是
-       **停表**（走完 demo_until 之後不再前進，見 sys_config_repo.effective_now），
+     ★ 0 與 1 都放行：計劃原訂「只有 1x」，但速度 = 0 的語意是**停表**
+       （走完 demo_until 之後不再前進，見 sys_config_repo.effective_now），
        虛擬時間根本不動，跨輪機率是零 —— 比 1x 還安全。照字面只認 1 的話，
-       停表狀態下整個調度入口會全部點不到。真正要擋的是 > 1 的快轉。 */
-  const speed = health?.demo_tail_speed
+       停表狀態下整個調度入口會全部點不到。真正要擋的是 > 1 的快轉。
+
+     ★ 2026-09-12：欄位由 demo_tail_speed 改為 demo_speed（流速搬進 DB，
+       tail 那個鍵已退場）。⚠ 漏改的話這裡會讀到 undefined = 永遠不禁用，
+       而且沒有任何錯誤 —— 快轉中按下去只會拿到 DISPATCH_STALE。 */
+  const speed = health?.demo_speed
   const fast = speed != null && speed > 1
   const mine = (orders?.items ?? []).filter((o) => o.anchor_uid === uid)
   const sent = mine.reduce((s, o) => s + o.bikes, 0)
