@@ -58,17 +58,33 @@ function DispatchEntry({
     .map((o) => (actionKind === 'refill' ? o.from.name : o.to.name))
     .filter(Boolean)
 
+  /* ★ 2026-09-12：建議台數已被既有調度單吃完（left = 0）→ 入口一併關掉。
+       left 這條算式跟後端的 need 是同一條（dispatch_service:103
+       need = max(0, bikes − already））。need = 0 時後端**仍會回一整串候選站**、
+       只是預勾全空 —— 不擋的話使用者按下去、等完 Bedrock，拿到的是一張
+       「0 站 / 0 台」的清單，勾不了也送不出。擋在按鈕層級才不會白等。
+       ⚠ need == null（撈不到建議台數）不算覆蓋，維持可按。 */
+  const covered = left != null && left <= 0
+  const off = fast || covered
+  const why = fast
+    ? '回放加速中，請切回 1x 再進行調度'
+    : covered
+      ? sent > 0
+        ? '建議台數已由既有調度單覆蓋，不需再發起'
+        : '本輪沒有建議調度的台數'
+      : undefined
+
   return (
     <div className="mt-[10px] border-t border-hair pt-[9px]">
       <div className="flex flex-wrap items-center gap-2">
         <button
           type="button"
-          disabled={fast}
-          title={fast ? '回放加速中，請切回 1x 再進行調度' : undefined}
+          disabled={off}
+          title={why}
           onClick={() => askDispatch({ anchorUid: uid, anchorName: name, action: actionKind })}
           className={cn(
             'flex items-center gap-[5px] rounded-xs border px-2 py-[3px] text-[0.72rem]',
-            fast
+            off
               ? 'cursor-not-allowed border-edge text-ink3 opacity-55'
               : 'border-info/55 text-info hover:bg-info-wash',
           )}
@@ -78,6 +94,11 @@ function DispatchEntry({
         </button>
         {fast && (
           <span className="text-[0.66rem] text-ink3">回放加速中，切回 1x 才能調度</span>
+        )}
+        {/* ★ 只在「沒有下面那行『已調度 N 台』可以解釋」時才補字 ——
+            sent > 0 的情況下方已經寫得很清楚，再加一句是重複。 */}
+        {!fast && covered && sent === 0 && (
+          <span className="text-[0.66rem] text-ink3">本輪沒有建議調度的台數</span>
         )}
       </div>
 

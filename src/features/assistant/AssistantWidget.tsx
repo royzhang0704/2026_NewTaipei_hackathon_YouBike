@@ -554,7 +554,9 @@ export function AssistantWidget() {
                         )}
                       </p>
 
-                      {m.dispatch && <DispatchCard d={m.dispatch} />}
+                      {/* ★ ready={!m.pending}：等 Bedrock 文案到齊才顯示調度入口（9/12 定案）——
+    候選早幾秒就到，但先出按鈕、後出說明，讀起來像「先叫你做、事後才解釋」。 */}
+                      {m.dispatch && <DispatchCard d={m.dispatch} ready={!m.pending} />}
 
                       {!!m.list?.items.length && (
                         <div className="mt-2 overflow-hidden rounded-xs border border-hair">
