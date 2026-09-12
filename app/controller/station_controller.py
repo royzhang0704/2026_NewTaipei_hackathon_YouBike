@@ -35,8 +35,9 @@ def alerts(town_code: str | None = Query(default=None, min_length=2, max_length=
            action: str | None = Query(default=None, pattern="^(refill|remove|hold)$"),
            limit: int = Query(default=100, ge=1, le=1000),
            offset: int = Query(default=0, ge=0)):
-    """全市／同區風險告警清單，高>中>低排序（同級再比持續輪數）。只讀 DB。"""
-    return alert_service.alerts(town_code, level, side, action, limit, offset)
+    """全市／同區風險告警清單，高>中>低排序（同級再比持續輪數）。只讀 DB。
+    每筆空站站點另外附 donor（最近的可調出滿站，city-wide 找，5km 內沒有就是 null）。"""
+    return alert_service.alerts(town_code, level, side, action, limit, offset, with_donor=True)
 
 
 @router.get("/stations/{uid}/risk")

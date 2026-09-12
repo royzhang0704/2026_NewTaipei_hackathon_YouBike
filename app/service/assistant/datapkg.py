@@ -4,11 +4,11 @@
 # 數字全在這裡定死，LLM 只負責引用。
 from __future__ import annotations
 
-import math
 import re
 from dataclasses import dataclass, field
 from typing import Literal, TypedDict
 
+from app.geo import dist_word, haversine_m
 from app.repository import station_repo
 from app.service import alert_service
 
@@ -107,23 +107,6 @@ def _donor_item(i: dict) -> dict:
     return {"name": i["name"], "可借": (i.get("now") or {}).get("avail"),
             "容量": i.get("capacity"),
             "可調出上限": (bikes if isinstance(bikes, int) else None)}
-
-
-def _haversine(p1, p2) -> float | None:
-    """兩點 (lat, lon) 的直線距離（公尺）；缺座標回 None。"""
-    if not p1 or not p2 or p1[0] is None or p2[0] is None:
-        return None
-    lat1, lon1, lat2, lon2 = (float(x) for x in (*p1, *p2))
-    dlat, dlon = math.radians(lat2 - lat1), math.radians(lon2 - lon1)
-    h = (math.sin(dlat / 2) ** 2
-         + math.cos(math.radians(lat1)) * math.cos(math.radians(lat2)) * math.sin(dlon / 2) ** 2)
-    return 2 * 6371000.0 * math.asin(math.sqrt(h))
-
-
-def _dist_word(m: float | None) -> str | None:
-    if m is None:
-        return None
-    return f"約 {round(m)} 公尺" if m < 1000 else f"約 {m / 1000:.1f} 公里"
 
 
 # ── 清單題 / 多區比較的 render payload ─────────────────────
@@ -289,7 +272,7 @@ def _attach_donors(data: dict, st: dict | None, city_items: list[dict]) -> list[
     if st and donors:
         coord = {s["station_uid"]: (s["lat"], s["lon"]) for s in station_repo.all_stations()}
         here = coord.get(st["station_uid"])
-        ranked = [(i, _haversine(here, coord.get(i["station_uid"]))) for i in donors]
+        ranked = [(i, haversine_m(here, coord.get(i["station_uid"]))) for i in donors]
         near = sorted((x for x in ranked if x[1] is not None and x[1] <= C.DONOR_MAX_M),
                       key=lambda x: x[1])[:5]
         if near:
@@ -308,7 +291,7 @@ def _attach_donors(data: dict, st: dict | None, city_items: list[dict]) -> list[
                     data.setdefault("站點", {})["可調出備註"] = (
                         f"附近餘裕站合計約 {acc} 台，尚缺 {need - acc} 台建議由調度中心的備用車補入")
             data.setdefault("站點", {})["可調出候選"] = [
-                {**_donor_item(i), "直線距離": _dist_word(dist)} for i, dist in near
+                {**_donor_item(i), "直線距離": dist_word(dist)} for i, dist in near
             ]
             return [_donor_action(i) for i, _ in near]
         # 最近的滿站也超過上限 —— 站對站不划算

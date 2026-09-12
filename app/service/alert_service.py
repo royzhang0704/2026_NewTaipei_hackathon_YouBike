@@ -12,12 +12,18 @@
 #   streak 當第二鍵是它的用途 —— 連 6 輪（3 小時）沒改善的站，
 #   要排在剛亮燈的站前面。
 # ════════════════════════════════════════════════════════════
+import os
+
 from app.errors import AppError
+from app.geo import haversine_m
 from app.repository import forecast_run_repo, risk_repo, station_repo, sys_config_repo
 from app.service.risk_service import LEVEL
 
 _TS = "%Y-%m-%d %H:%M:%S"
 _NAME_N = {v: k for k, v in LEVEL.items()}          # high/mid/low/none → 3/2/1/0
+# 跟調度助理共用同一個環境變數（ASSISTANT_DONOR_MAX_KM），維持「多遠算太遠」口徑一致；
+# 不直接 import assistant.common 是為了避免循環引用（assistant 反過來會 import 這個模組）。
+_DONOR_MAX_M = float(os.environ.get("ASSISTANT_DONOR_MAX_KM", "5")) * 1000
 
 
 def _ts(v):
@@ -46,9 +52,43 @@ def _item(r: dict, origin) -> dict:
     }
 
 
+def _nearest_donor(uid: str, coord: dict, donors: list[dict]) -> dict | None:
+    """從 donors（全市滿站、且判定該取車的站）裡找離 uid 最近、在 _DONOR_MAX_M 內的一站。
+    找不到（太遠 / 沒有候選）回 None——前端顯示「由調度中心備用車補入」之類的備援文字。"""
+    here = coord.get(uid)
+    if not here:
+        return None
+    best, best_dist = None, None
+    for d in donors:
+        if d["station_uid"] == uid:
+            continue
+        dist = haversine_m(here, coord.get(d["station_uid"]))
+        if dist is not None and dist <= _DONOR_MAX_M and (best_dist is None or dist < best_dist):
+            best, best_dist = d, dist
+    if best is None:
+        return None
+    return {"station_uid": best["station_uid"], "name": best["station_name"],
+            "town": best["town"], "bikes": best["bikes"], "dist_m": round(best_dist)}
+
+
+def _attach_donors(items: list[dict], origin) -> None:
+    """幫每一筆「空站」item 掛上 donor 欄位——最近的可調出滿站（city-wide，不受這次查詢的
+    town_code / limit 篩選影響，因為調出點本來就可能在別區）。跟調度助理找調度來源用同一套邏輯
+    （最近、限 _DONOR_MAX_M 內），只是這裡只取最近一站，不做 coverage-walk（清單卡片版面有限）。"""
+    if not any(i["side"] == "shortage" for i in items):
+        return
+    donor_rows = risk_repo.rank(origin, None, (3, 2, 1), "full", "remove", 1000, 0)
+    coord = {s["station_uid"]: (s["lat"], s["lon"]) for s in station_repo.all_stations()}
+    donors = [{"station_uid": r["station_uid"], "station_name": r["station_name"],
+               "town": r["town"], "bikes": r["bikes"]} for r in donor_rows]
+    for i in items:
+        if i["side"] == "shortage":
+            i["donor"] = _nearest_donor(i["station_uid"], coord, donors) if donors else None
+
+
 def alerts(town_code: str | None = None, level: str | None = None,
            side: str | None = None, action: str | None = None,
-           limit: int = 100, offset: int = 0) -> dict:
+           limit: int = 100, offset: int = 0, with_donor: bool = False) -> dict:
     origin = forecast_run_repo.latest_risk_origin(sys_config_repo.effective_now())
     if origin is None:
         raise AppError("NO_RISK_SNAPSHOT", 422,
@@ -66,6 +106,9 @@ def alerts(town_code: str | None = None, level: str | None = None,
     rows = risk_repo.rank(origin, town_code, levels, side, action, limit, offset)
     s = risk_repo.summary(origin, town_code)
     st = forecast_run_repo.round_stats(origin)
+    items = [_item(r, origin) for r in rows]
+    if with_donor:
+        _attach_donors(items, origin)
 
     return {
         "origin": _ts(origin),
@@ -81,7 +124,7 @@ def alerts(town_code: str | None = None, level: str | None = None,
             "remove": {"stations": s["remove_stations"], "bikes": s["remove_bikes"]},
             "hold": s["hold_stations"],
         },
-        "items": [_item(r, origin) for r in rows],
+        "items": items,
         "total": risk_repo.count(origin, town_code, levels, side, action),
         "limit": limit, "offset": offset,
         "source": ("hackathon_backend_risk_snapshot（Job B 每 30 分判定）；"
