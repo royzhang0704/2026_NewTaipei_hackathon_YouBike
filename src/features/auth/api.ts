@@ -19,7 +19,7 @@ function endpoint(path: string): string {
 /** 已知帳號 → 姓名 / 角色（mock 用，模擬「登入後由目錄服務補上」）。
     不在表內的帳號一律以帳號字串當名稱 —— mock 模式維持「任意帳密可進」。 */
 const DEMO_ACCOUNTS: Record<string, { name: string; role: string }> = {
-  'chang.zc': { name: '張志強', role: '調度員' },
+  'chang.zc': { name: '張志強', role: '調度主管' },
 }
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
