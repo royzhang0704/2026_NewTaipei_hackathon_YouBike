@@ -49,7 +49,14 @@ CREATE TABLE IF NOT EXISTS public.hackathon_backend_dispatch_order (
 
 -- ★ 同一對 (來源, 目的) 同時只能有一筆進行中的單。
 --   部分唯一索引（WHERE status='active'）—— 收掉的舊單不佔位，
---   同一對站之後還能再派。重複確認走 ON CONFLICT 覆蓋台數，不是錯誤。
+--   同一對站之後還能再派。
+-- ★★ 2026-09-12：重複確認走 ON CONFLICT **疊加**台數（原本是覆蓋）。
+--   出處：meet/20260912/計劃-同站重複調度會覆蓋.md 方案 B。
+--   覆蓋語意分不出「同一輪改主意」與「跨輪的第二趟車」——後者會讓第一趟的
+--   台數憑空消失（6 台 + 2 台 = 2 台），連帶 promised 少扣、來源站被超賣。
+--   改成疊加後：每次確認都是再追加一趟。要減量請撤銷該筆再重下。
+--   ⚠ 本索引不含 origin，是刻意的：同一對站的多趟合併成一列累計台數，
+--     地圖才不會出現兩條重疊的 A→B 線。
 CREATE UNIQUE INDEX IF NOT EXISTS hackathon_backend_dispatch_order_active_pair_idx
   ON public.hackathon_backend_dispatch_order (from_uid, to_uid) WHERE status = 'active';
 

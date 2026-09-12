@@ -41,9 +41,26 @@ SELECT d.id, d.bikes, d.distance_m, d.anchor_uid, d.action, d.status,
 def insert_many(rows: list[dict]) -> list[int]:
     """寫入一批調度單，回傳 id 清單（順序同輸入）。
 
-    ★ 同一對 (from_uid, to_uid) 已有 active 單 → ON CONFLICT 覆蓋台數，
-      **不是錯誤**（使用者改主意把 3 台改成 5 台，就該是同一筆）。
-      conflict target 的 WHERE 必須與 active_pair_idx 的 predicate 一字不差，
+    ★★ 2026-09-12 改為**疊加**（原本是覆蓋）。
+      出處：meet/20260912/計劃-同站重複調度會覆蓋.md 方案 B。
+
+      舊制 `bikes = EXCLUDED.bikes` 的語意是「同一輪內改主意，3 台改成 5 台
+      就該是同一筆」。但索引不含 origin，所以**跨輪的第二趟車**也走同一條
+      路徑 —— 第 1 輪 A→B 派 6 台、第 2 輪再派 2 台，結果是 2 台不是 8 台，
+      第一趟的 4 台憑空消失，`already` / `promised` 跟著少扣，A 站被當成
+      還有餘裕，可能再被超賣一次。
+
+      現在 `bikes = 本表.bikes + EXCLUDED.bikes`：每次確認都是「再追加一趟」。
+      ⚠ 代價講明：**「改主意」沒有了** —— 同一對站再送一次一律相加，
+        3 台改成 5 台會變成 8 台。要減量請撤銷（DELETE /dispatch/orders/{id}）
+        再重下。相對應地，寫入驗證那邊的「把本 anchor 已佔走的量加回上界」
+        必須拿掉（見 dispatch_service.create_orders），否則會放行超賣。
+
+    ★ 其餘欄位維持 EXCLUDED（覆蓋成最新值）：origin / created_slot 因此代表
+      **最後一次追加是哪一輪、哪個虛擬時刻**，不是第一趟。溯源要看整段歷程
+      請查 job_run 與 id 區間。
+
+    ★ conflict target 的 WHERE 必須與 active_pair_idx 的 predicate 一字不差，
       否則 Postgres 找不到對應索引會直接報 no unique constraint matching。
 
     ★ 逐筆 execute 不用 executemany：一次確認最多 10 筆（§4-3 給前端的上限），
@@ -52,8 +69,10 @@ def insert_many(rows: list[dict]) -> list[int]:
     if not rows:
         return []
     ph = ", ".join(["%s"] * len(COLS))
-    upd = ", ".join(f"{c} = EXCLUDED.{c}" for c in COLS
-                    if c not in ("from_uid", "to_uid"))
+    # bikes 疊加，其餘覆蓋。★ 用表名限定（不是 EXCLUDED）才是「已經在表裡的那筆」。
+    upd = ", ".join(f"bikes = {TABLE}.bikes + EXCLUDED.bikes" if c == "bikes"
+                    else f"{c} = EXCLUDED.{c}"
+                    for c in COLS if c not in ("from_uid", "to_uid"))
     sql = (f"INSERT INTO {TABLE} ({', '.join(COLS)}) VALUES ({ph}) "
            f"ON CONFLICT (from_uid, to_uid) WHERE status = 'active' "
            f"DO UPDATE SET {upd} RETURNING id")
@@ -228,27 +247,29 @@ if __name__ == "__main__":
         assert r0["operator"] == "IM_TEST", r0["operator"]
         print(f"   operator={r0['operator']} ✓")
 
-        print("── ④ 同一對重複寫入 → 仍一列，台數被覆蓋（驗收 4）")
+        print("── ④ 同一對重複寫入 → 仍一列，台數**疊加**（9/12 改，原為覆蓋）")
         ids2 = insert_many([row(u[0], u[2], 9)])
         rows = [r for r in list_by_status("active") if r["anchor_uid"] == MARK]
         assert ids2[0] == ids[0], (ids2, ids)
         assert len(rows) == 2, f"重複寫入不該多一列，實得 {len(rows)}"
-        assert next(r["bikes"] for r in rows if r["id"] == ids[0]) == 9
-        print(f"   id={ids2[0]} 不變，bikes 3 → 9 ✓")
+        # ★ 3 + 9 = 12。若這裡拿到 9，表示 DO UPDATE 又變回覆蓋了 ——
+        #   那正是「第一趟的台數憑空消失」的病徵，整個調度總量會少算。
+        assert next(r["bikes"] for r in rows if r["id"] == ids[0]) == 12
+        print(f"   id={ids2[0]} 不變，bikes 3 + 9 = 12 ✓")
 
         print("── ⑤ promised：dir=+1 看 from_uid（誰的車被抽走）")
         p = promised(1)
-        assert p.get(u[0], 0) >= 9 and p.get(u[1], 0) >= 4, p
+        assert p.get(u[0], 0) >= 12 and p.get(u[1], 0) >= 4, p
         print(f"   {u[0][-4:]} 已承諾 {p[u[0]]} 台、{u[1][-4:]} {p[u[1]]} 台 ✓")
 
         print("── ⑥ promised：dir=−1 看 to_uid（誰已被塞車）")
         p2 = promised(-1)
-        assert p2.get(u[2], 0) >= 13, p2
+        assert p2.get(u[2], 0) >= 16, p2
         print(f"   {u[2][-4:]} 已被塞 {p2[u[2]]} 台 ✓")
 
         print("── ⑦ by_anchor：行動卡「已調度 N 台」的來源")
         mine = by_anchor(MARK)
-        assert len(mine) == 2 and sum(r["bikes"] for r in mine) == 13, mine
+        assert len(mine) == 2 and sum(r["bikes"] for r in mine) == 16, mine
         print(f"   {len(mine)} 筆、合計 {sum(r['bikes'] for r in mine)} 台 ✓")
 
         print("── ⑧ close：軟刪不 DELETE，且只收 active")

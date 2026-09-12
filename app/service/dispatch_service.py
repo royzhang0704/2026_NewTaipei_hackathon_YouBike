@@ -189,6 +189,9 @@ def create_orders(anchor_uid: str, action: str, items: list[dict]) -> dict:
 
     ★ 為什麼不 clamp：把 6 台自動改成 4 台送出去，調度員會以為派了 6 台。
       寧可整批退回讓他重問，也不要默默改掉他按下的數字。
+
+    ★ 2026-09-12：同一對站重複確認改為**疊加**（見 dispatch_repo.insert_many）。
+      每次確認 = 再追加一趟車，不是改寫前一趟。
     """
     if not items:
         raise AppError("DISPATCH_EMPTY", 400, "沒有選擇任何調度來源")
@@ -212,12 +215,14 @@ def create_orders(anchor_uid: str, action: str, items: list[dict]) -> dict:
     rows = {c["station_uid"]: c for c in
             dispatch_repo.candidate_rows(origin, anchor_uid, direction,
                                          exclude, config.DISPATCH_MIN_BIKES)}
-    # 本 anchor 已經佔走的量要加回上界，否則「3 台改成 5 台」會被自己擋掉
-    #   —— promised 已把那 3 台從 supply 扣掉了，這筆 upsert 是覆蓋不是疊加。
-    mine = {}
-    for o in dispatch_repo.by_anchor(anchor_uid):
-        other = o["from_uid"] if direction == 1 else o["to_uid"]
-        mine[other] = mine.get(other, 0) + o["bikes"]
+    # ★★ 2026-09-12：原本這裡會「把本 anchor 已佔走的量加回上界」，已移除。
+    #   出處：meet/20260912/計劃-同站重複調度會覆蓋.md 方案 B。
+    #   那段是為了配合 upsert 的**覆蓋**語意（新單取代舊單，舊單的量會還回來），
+    #   所以上界要放寬。9/12 起 insert_many 改成**疊加**，舊單留著、新量往上加
+    #   —— 還留著加回就等於允許超賣（A 站只剩 2 台餘裕，卻因為先前答應過 6 台
+    #   而放行第二筆 8 台）。疊加語意下，剩餘容量就是 supply 本身，不必加回。
+    #   ⚠ 代價：「同一對站改主意 3 台改成 5 台」不再可行，會變成 8 台。
+    #     要減量請先撤銷該筆再重下（DELETE /dispatch/orders/{id}）。
 
     here = (anchor["lat"], anchor["lon"])
     rows_to_write = []
@@ -231,7 +236,9 @@ def create_orders(anchor_uid: str, action: str, items: list[dict]) -> dict:
             # 三種可能：站不在最新一輪／已轉成反向 action／餘裕已被別人佔光。
             # 對使用者是同一件事「這站現在不能調了」，不必分辨。
             raise AppError("DISPATCH_STALE", 400, STALE_MSG)
-        if bikes > int(c["supply"]) + mine.get(uid, 0):
+        # supply 已經扣掉所有 active 單佔走的量（dispatch_repo.promised），
+        # 所以它就是「這一筆還能再追加多少」。疊加語意下不再加回自己的舊量。
+        if bikes > int(c["supply"]):
             raise AppError("DISPATCH_STALE", 400, STALE_MSG)
 
         dist = haversine_m(here, (c["lat"], c["lon"]))
