@@ -40,7 +40,6 @@ export function AppShell() {
   const setFontScale = useAppStore((s) => s.setFontScale)
 
   const { time, speed } = useServerClock(health?.now, isError, refetchHealth, dataUpdatedAt)
-  useSlotSync(time)
 
   // 回放 / 示範時間軸判定：與 OverviewCaption 共用 isReplayMode（見 lib/format）
   const replaying = isReplayMode(health)
@@ -76,6 +75,10 @@ export function AppShell() {
     (crossedMs !== null && curSlotMs !== null && crossedMs > curSlotMs
       ? new Date(crossedMs)
       : null)
+
+  /* ★ 解鎖時才重抓資料（見 useSlotSync）——跨格當下抓到的是上一格。
+       這行必須擺在 lockAt 之後，不能跟其他 hook 一起提到最上面。 */
+  useSlotSync(time, lockAt !== null)
 
   const dataTo = health?.current_slot ? mdhm(health.current_slot) : null
   const fcTo = health?.forecast_end ? mdhm(health.forecast_end) : null
