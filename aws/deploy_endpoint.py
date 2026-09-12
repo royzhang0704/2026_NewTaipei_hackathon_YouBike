@@ -15,7 +15,9 @@ import time
 
 import boto3
 
-REGION   = "ap-northeast-1"
+# ★ 與 ml-deepar/sm_train.py 同一套環境變數：source env.hackathon.sh 就整組切到賽會帳號。
+#   不設時走自有帳號 ap-northeast-1，行為與改版前相同。
+REGION   = os.environ.get("SM_REGION", "ap-northeast-1")
 # ★ demo2604：訓練集只到 2026-03-31，demo 回放 2026-05 時模型沒見過答案。
 #   舊的 youbike-deepar-h6 Model/Config 物件仍在（不計費），名稱要錯開。
 #
@@ -28,7 +30,22 @@ JOB      = os.environ.get("SM_JOB",      "youbike-deepar-demo2604-20260831-08460
 MODEL    = os.environ.get("SM_MODEL",    "youbike-deepar-demo2604")
 CONFIG   = os.environ.get("SM_CONFIG",   MODEL + "-config")
 ENDPOINT = os.environ.get("SM_ENDPOINT", MODEL)
-IMAGE    = "633353088612.dkr.ecr.ap-northeast-1.amazonaws.com/forecasting-deepar:1"  # sm_train.py，六個 job 都用它跑完
+# ★ DeepAR image 的 ECR 帳號每區不同 —— 只改 REGION 不改 IMAGE 會 ValidationException，
+#   而錯誤訊息只說找不到 image、不指向區域。所以由 REGION 推導，不讓兩者脫鉤。
+#   （與 ml-deepar/sm_train.py 的 DEEPAR_ACCOUNTS 同一份表，兩邊要一起維護）
+DEEPAR_ACCOUNTS = {
+    "ap-northeast-1": "633353088612",
+    "us-west-2":      "156387875391",
+    "us-east-1":      "522234722520",
+}
+if os.environ.get("SM_IMAGE"):
+    IMAGE = os.environ["SM_IMAGE"]
+elif REGION in DEEPAR_ACCOUNTS:
+    IMAGE = f"{DEEPAR_ACCOUNTS[REGION]}.dkr.ecr.{REGION}.amazonaws.com/forecasting-deepar:1"
+else:
+    raise SystemExit(f"✗ 不認得 {REGION} 的 DeepAR image 帳號。"
+                     f"已知：{', '.join(DEEPAR_ACCOUNTS)}。"
+                     f"其他區請用 SM_IMAGE 直接給完整 URI。")
 INSTANCE = os.environ.get("SM_INSTANCE", "ml.m5.large")   # 1,550 條序列 × 100 samples 用不到 c5.2xlarge；不夠再 update_endpoint
 
 sm  = boto3.client("sagemaker", region_name=REGION)
