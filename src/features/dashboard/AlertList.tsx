@@ -1,6 +1,8 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
+import { ArrowDown, ArrowUp } from 'lucide-react'
 import { useAppStore, type AlertSide } from '@/stores/useAppStore'
 import { useAlerts } from '@/api/queries'
+import type { RiskLevel } from '@/api/types'
 import { segChip } from '@/components/ui/segChip'
 import { cn } from '@/lib/utils'
 
@@ -8,6 +10,14 @@ const SIDES: { key: AlertSide; label: string }[] = [
   { key: 'all', label: '全部' },
   { key: 'shortage', label: '空站' },
   { key: 'full', label: '滿站' },
+]
+
+/** 依嚴重度分組顯示（見下方 grouped）。只列會出現在警示清單裡的三級；
+    標題沿用 KpiStrip 已經在用的白話句，全站同一套詞。 */
+const LEVEL_GROUPS: { level: Exclude<RiskLevel, 'none'>; title: string }[] = [
+  { level: 'high', title: '高風險・已空站或滿站' },
+  { level: 'mid', title: '中風險・1 小時內空站或滿站' },
+  { level: 'low', title: '低風險' },
 ]
 
 export function AlertList() {
@@ -66,6 +76,16 @@ export function AlertList() {
     if (level !== 'all') list = list.filter((i) => i.level === level)
     return list
   }, [all, side, level])
+
+  // 依嚴重度分組（高→中→低，組內維持原排序）；序號在分組後重編，跟畫面上看到的順序一致
+  // （不是原陣列位置），組內同一批不夾雜其他嚴重度的站。
+  const grouped = useMemo(() => {
+    let no = 0
+    return LEVEL_GROUPS.map((g) => ({
+      ...g,
+      rows: filtered.filter((it) => it.level === g.level).map((it) => ({ it, no: ++no })),
+    })).filter((g) => g.rows.length > 0)
+  }, [filtered])
 
   // 報讀者狀態訊息：篩選一變、count 一變就唸「（高風險・）空站・共 N 筆待處理」
   const scopeLabel = [
@@ -137,59 +157,114 @@ export function AlertList() {
         </div>
       ) : (
         <ul className="m-0 list-none p-0">
-          {filtered.map((it, i) => {
-            const sel = selectedUid === it.station_uid
-            // anim-row：key 穩定 → 只有「新出現的站」重掛播放（換批後看得出哪站新冒出來）；
-            // 首次載入時整批淡入；不處理離場，以免引入 AnimatePresence 依賴。
-            return (
-              <li key={it.station_uid} className="anim-row border-b border-hair">
-                {/* 原本是 <li onClick>：鍵盤 Tab 不到、Enter 無效、報讀者不當它可互動。
-                    改成原生 <button> → 免寫 keydown 就有 Enter/Space、focus 樣式吃全域 :focus-visible。 */}
-                <button
-                  ref={(el) => {
-                    if (el) rowRefs.current.set(it.station_uid, el)
-                    else rowRefs.current.delete(it.station_uid)
-                  }}
-                  type="button"
-                  aria-pressed={sel}
-                  style={{ scrollMarginTop: headH + 6 }}
-                  onClick={() => selectStation(it.station_uid)}
-                  className={cn(
-                    'relative grid w-full cursor-pointer grid-cols-[2.3em_1fr_auto] items-baseline gap-x-3 px-4 py-[11px] text-left hover:bg-white/[0.03]',
-                    sel && 'bg-white/[0.055]',
-                  )}
-                >
-                  {sel && <span className="absolute left-0 top-0 h-full w-[2px] bg-ink" />}
-                  <span className="num text-[1rem] text-ink3">{String(i + 1).padStart(2, '0')}</span>
-                  <span className="min-w-0">
-                    {/* 行政區小標在站名上方；風險等級跟調車來源已移除／移到右欄，
-                        這裡只留「這站是哪裡、叫什麼」兩行。 */}
-                    <span className="block whitespace-nowrap text-[0.73rem] tracking-[0.04em] text-ink3">
-                      {it.town}
-                    </span>
-                    <span className="mt-[1px] block font-serif text-[1.05rem] leading-[1.3] tracking-[-0.015em]">
-                      {it.name}
-                    </span>
-                  </span>
-                  <span className="whitespace-nowrap text-right tracking-[0.04em] text-ink3">
-                    {/* 右欄固定 3 行：可借 X／Y ／ 建議補／取 N 台 ／ 已 X 小時。
-                        前兩行同字級；已 X 小時較小；先不上色（暖／冷），之後要加再說。 */}
-                    <b className="num block text-[0.85rem] tracking-[-0.02em]">
-                      可借 {it.now.avail ?? '—'}／{it.capacity ?? '?'}
-                    </b>
-                    <b className="num block text-[0.85rem] tracking-[-0.02em]">
-                      {it.dispatch
-                        ? `${it.dispatch.action === 'refill' ? '建議補 ' : it.dispatch.action === 'remove' ? '建議取 ' : ''}${it.dispatch.bikes} 台`
-                        : '—'}
-                    </b>
-                    {it.streak && (
-                      <span className="block text-[0.68rem] leading-[1.4]">已 {it.streak.hours} 小時</span>
-                    )}
-                  </span>
-                </button>
+          {grouped.map((g) => (
+            <Fragment key={g.level}>
+              {/* 分組標題：純資訊、非互動列。序號在分組後重編，跟畫面看到的順序一致，
+                  不會因為原始陣列裡夾雜別的嚴重度而跳號。 */}
+              <li>
+                <div className="border-b border-t border-hair bg-raise px-4 py-[6px] text-[0.68rem] tracking-[0.06em] text-ink3">
+                  {g.title}
+                </div>
               </li>
-            )
-          })}
+              {g.rows.map(({ it, no }) => {
+                const sel = selectedUid === it.station_uid
+                const isShort = it.side === 'shortage'
+                // 缺車看「可借」、滿站看「空位」——各自真正吃緊的那個數字，跟右欄方向色一致。
+                const capVal = isShort ? it.now.avail : it.now.free
+                const cap = it.capacity ?? 0
+                const pct = cap > 0 && capVal != null ? Math.min(100, Math.max(0, (capVal / cap) * 100)) : 0
+                // 整列底色：色相＝方向（暖缺車／冷滿站），濃淡＝嚴重度（高風險原色、中風險減半、低風險不上色）
+                // ——沿用既有的 hot-wash/cold-wash token，不另開一套風險專屬色相。
+                const washClass =
+                  g.level === 'high'
+                    ? isShort
+                      ? 'bg-hot-wash'
+                      : 'bg-cold-wash'
+                    : g.level === 'mid'
+                      ? isShort
+                        ? 'bg-hot-wash-weak'
+                        : 'bg-cold-wash-weak'
+                      : undefined
+                return (
+                  <li key={it.station_uid} className="anim-row border-b border-hair">
+                    {/* 原本是 <li onClick>：鍵盤 Tab 不到、Enter 無效、報讀者不當它可互動。
+                        改成原生 <button> → 免寫 keydown 就有 Enter/Space、focus 樣式吃全域 :focus-visible。 */}
+                    <button
+                      ref={(el) => {
+                        if (el) rowRefs.current.set(it.station_uid, el)
+                        else rowRefs.current.delete(it.station_uid)
+                      }}
+                      type="button"
+                      aria-pressed={sel}
+                      style={{ scrollMarginTop: headH + 6 }}
+                      onClick={() => selectStation(it.station_uid)}
+                      className={cn(
+                        'relative grid w-full cursor-pointer grid-cols-[2.3em_1fr_auto] items-baseline gap-x-3 gap-y-1 border-l-2 px-4 py-[11px] text-left hover:bg-white/[0.03]',
+                        washClass,
+                        g.level === 'low' ? 'border-l-transparent' : isShort ? 'border-l-hot/50' : 'border-l-cold/50',
+                        sel && 'bg-white/[0.055]',
+                      )}
+                    >
+                      {sel && <span className="absolute left-0 top-0 h-full w-[2px] bg-ink" />}
+                      <span className="num text-[1rem] text-ink3">{String(no).padStart(2, '0')}</span>
+                      <span className="min-w-0">
+                        {/* 行政區小標在站名上方；風險等級跟調車來源已移除／移到分組標題與右欄，
+                            這裡只留「這站是哪裡、叫什麼」兩行。 */}
+                        <span className="block whitespace-nowrap text-[0.73rem] tracking-[0.04em] text-ink3">
+                          {it.town}
+                        </span>
+                        <span className="mt-[1px] block font-serif text-[1.05rem] leading-[1.3] tracking-[-0.015em]">
+                          {it.name}
+                        </span>
+                      </span>
+                      <span className="whitespace-nowrap text-right tracking-[0.04em]">
+                        {/* 這列存在的理由：建議補／取 N 台，最大、粗體、依方向上色 + 箭頭（不只靠顏色，
+                            色盲也能靠圖示分辨方向）。已 X 小時是輔助資訊。 */}
+                        <b
+                          className={cn(
+                            'num inline-flex items-center gap-[3px] text-[1rem] tracking-[-0.02em]',
+                            isShort ? 'text-hot' : 'text-cold',
+                          )}
+                        >
+                          {it.dispatch &&
+                            (isShort ? (
+                              <ArrowDown className="size-3" aria-hidden />
+                            ) : (
+                              <ArrowUp className="size-3" aria-hidden />
+                            ))}
+                          {it.dispatch
+                            ? `${it.dispatch.action === 'refill' ? '建議補 ' : it.dispatch.action === 'remove' ? '建議取 ' : ''}${it.dispatch.bikes} 台`
+                            : '—'}
+                        </b>
+                        {/* 9/12 起 streak 只算高風險——中低風險 hours 恆為 null，不顯示這行
+                            （it.streak 物件本身一定存在，判斷式要看 hours 有沒有值，不是看物件存不存在） */}
+                        {it.streak?.hours != null && (
+                          <span className="block text-[0.68rem] leading-[1.4] text-ink3">
+                            已 {it.streak.hours} 小時
+                          </span>
+                        )}
+                      </span>
+                      {/* 可借／空位＋容量比例條：跨第 2、3 欄，落在站名與行動數字下方（不是序號下方）。 */}
+                      <div className="col-span-2 col-start-2 flex items-center gap-2">
+                        <span className="num flex-none whitespace-nowrap text-[0.73rem] text-ink3">
+                          {isShort ? '可借' : '空位'} {capVal ?? '—'}／{it.capacity ?? '?'}
+                        </span>
+                        <span
+                          className="h-[3px] min-w-[32px] flex-1 overflow-hidden rounded-full bg-hair"
+                          aria-hidden
+                        >
+                          <span
+                            className={cn('block h-full rounded-full', isShort ? 'bg-hot' : 'bg-cold')}
+                            style={{ width: `${pct}%` }}
+                          />
+                        </span>
+                      </div>
+                    </button>
+                  </li>
+                )
+              })}
+            </Fragment>
+          ))}
         </ul>
       )}
     </>

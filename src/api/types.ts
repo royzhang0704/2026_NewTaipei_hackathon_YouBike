@@ -117,10 +117,12 @@ export interface StationDay {
   caveats?: string[] | null
 }
 
+/** 連續高風險的輪數／時數——9/12 起只算高風險，中低風險 since/hours 恆為 null
+    （n 仍會是 0，物件本身一定存在，不要用 `it.streak &&` 判斷，要看 `it.streak?.hours != null`）。 */
 export interface AlertStreak {
   n: number
-  since: string
-  hours: number
+  since: string | null
+  hours: number | null
 }
 
 /** 空站建議調車來源——city-wide 找最近的可調出滿站（5km 內），沒有就是 null（改由調度中心備車補入）。

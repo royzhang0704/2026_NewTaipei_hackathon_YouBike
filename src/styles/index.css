@@ -33,6 +33,10 @@
 
   --color-hot-wash: rgba(238, 90, 52, 0.12);
   --color-cold-wash: rgba(90, 134, 214, 0.12);
+  /* -weak：中風險用的淡一階疊色（同色相、砍半飽和度），跟上面兩個高風險疊色搭成
+     「色相＝方向、濃淡＝急迫度」——不用再另開一套風險專屬色相。AlertList 整列底色用。 */
+  --color-hot-wash-weak: rgba(238, 90, 52, 0.06);
+  --color-cold-wash-weak: rgba(90, 134, 214, 0.06);
 
   --radius-xs: 2px;
   --radius-sm: 4px; /* 浮層（Popover / 卡片）用；2px 在大面積元素偏生硬 */
@@ -79,6 +83,8 @@
   --color-gold: #8a6600;
   --color-hot-wash: rgba(198, 70, 31, 0.1);
   --color-cold-wash: rgba(40, 97, 207, 0.1);
+  --color-hot-wash-weak: rgba(198, 70, 31, 0.05);
+  --color-cold-wash-weak: rgba(40, 97, 207, 0.05);
   --color-focus: #1f5fe0;
 }
 
