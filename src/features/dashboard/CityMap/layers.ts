@@ -93,11 +93,19 @@ const F_GLOW = [
 const F_BASE = ['==', ['get', 'level'], 'none'] as FilterSpecification
 const F_ALERT = ['!=', ['get', 'level'], 'none'] as FilterSpecification
 
-/** 選區時把基礎過濾 AND 上「只留該區」 */
-export function scopeFilter(base: FilterSpecification, town: string): FilterSpecification {
-  return town
-    ? (['all', base, ['==', ['get', 'town'], town]] as unknown as FilterSpecification)
-    : base
+/** 選區時把基礎過濾 AND 上「只留該區」。
+    ★ keep：無論選哪一區都要留下的站 —— 調度線的兩端。跨區調度的來源站
+      多半不在目前這一區，被篩掉的話線會連到一個看不見的點。 */
+export function scopeFilter(
+  base: FilterSpecification,
+  town: string,
+  keep: string[] = [],
+): FilterSpecification {
+  if (!town) return base
+  const inScope = keep.length
+    ? ['any', ['==', ['get', 'town'], town], ['in', ['get', 'uid'], ['literal', keep]]]
+    : ['==', ['get', 'town'], town]
+  return ['all', base, inScope] as unknown as FilterSpecification
 }
 
 /** 有選取站(sel)時：選中站 full、其他站 dim；沒選取時全部 full。 */
@@ -123,11 +131,11 @@ function sideDim(
 export const STATION_LAYERS = {
   // 高風險站雷達 ping（半徑/透明度由 rAF 每幀更新）。z<10.5（全市視野）時
   // rAF 會把透明度壓成 0；縮放到單區尺度才動，不管是點 chip 還是手動放大。
-  pulse: (town: string): LayerProps => ({
+  pulse: (town: string, keep: string[] = []): LayerProps => ({
     id: 'st-pulse',
     type: 'circle',
     source: 'stations',
-    filter: scopeFilter(['==', ['get', 'level'], 'high'] as FilterSpecification, town),
+    filter: scopeFilter(['==', ['get', 'level'], 'high'] as FilterSpecification, town, keep),
     paint: {
       'circle-color': COLOR_BY_SIDE as never,
       'circle-radius': 6,
@@ -135,11 +143,11 @@ export const STATION_LAYERS = {
       'circle-blur': 0.35,
     },
   }),
-  glow: (town: string): LayerProps => ({
+  glow: (town: string, keep: string[] = []): LayerProps => ({
     id: 'st-glow',
     type: 'circle',
     source: 'stations',
-    filter: scopeFilter(F_GLOW, town),
+    filter: scopeFilter(F_GLOW, town, keep),
     paint: {
       'circle-color': COLOR_BY_SIDE as never,
       // 低 zoom 縮小成色調、放大才變暈影
@@ -158,11 +166,11 @@ export const STATION_LAYERS = {
   }),
   // 健康站＝空心白圈。半徑與線粗依比例尺縮放：城市視野細（密集區才不糊成一片），
   // 放大到單區正常粗細。
-  base: (town: string, sel: string | null, theme: Theme): LayerProps => ({
+  base: (town: string, sel: string | null, theme: Theme, keep: string[] = []): LayerProps => ({
     id: 'st-base',
     type: 'circle',
     source: 'stations',
-    filter: scopeFilter(F_BASE, town),
+    filter: scopeFilter(F_BASE, town, keep),
     paint: {
       'circle-radius': ['interpolate', ['linear'], ['zoom'], 9, 1.8, 11, 2.4, 13, 4, 15, 6],
       // 淺色：近白實心填 + 深細環 → 在忙碌底圖上也是清楚的「甜甜圈」；深色：原本的透明填
@@ -176,11 +184,11 @@ export const STATION_LAYERS = {
     } as never,
   }),
   // 形狀編碼：缺車＝實心圓、滿站＝空心圈（藍粗框）。灰階下也分得出（實心 vs 空心）。
-  alert: (town: string, sel: string | null, theme: Theme): LayerProps => ({
+  alert: (town: string, sel: string | null, theme: Theme, keep: string[] = []): LayerProps => ({
     id: 'st-alert',
     type: 'circle',
     source: 'stations',
-    filter: scopeFilter(F_ALERT, town),
+    filter: scopeFilter(F_ALERT, town, keep),
     paint: {
       'circle-color': COLOR_BY_SIDE as never,
       'circle-radius': [
@@ -256,4 +264,91 @@ export const DISTRICT_LAYERS = {
   }),
 }
 
-export const INTERACTIVE_LAYER_IDS = ['st-alert', 'st-base']
+/* ── 調度路線 ─────────────────────────────────────────────────
+   ★ 這一組刻意**不套 scopeFilter**：跨區調度的兩端本來就分屬不同區，
+     用區篩掉任一端，線就斷在半空中。選區時線照樣整條顯示（兩端的站點
+     也由 CityMap 的站點層加 in 例外強制顯示）。
+
+   ★ 用青綠（--color-info）＋虛線，與 hot/cold 的站點在色相與形狀上都分開：
+     站點是「狀態」（實心／空心圓），調度是「動作」（會動的虛線）。 */
+const INFO = { dark: '#3fb9a5', light: '#0e7a6f' } as const
+
+/** 高亮那一筆（行動卡「查看」）：該線加粗、其餘淡化。 */
+const hi = (id: number | null, on: number, off: number): number | unknown[] =>
+  id == null ? on : ['case', ['==', ['get', 'id'], id], on, off]
+
+export const DISPATCH_LAYERS = {
+  line: (theme: Theme, highlight: number | null): LayerProps => ({
+    id: 'dispatch-line',
+    type: 'line',
+    source: 'dispatch',
+    filter: ['==', ['geometry-type'], 'LineString'] as FilterSpecification,
+    layout: { 'line-cap': 'round', 'line-join': 'round' },
+    paint: {
+      'line-color': INFO[theme === 'light' ? 'light' : 'dark'],
+      'line-width': ['interpolate', ['linear'], ['zoom'], 9, hi(highlight, 1.4, 0.8), 13, hi(highlight, 3.6, 2), 16, hi(highlight, 5, 2.6)],
+      'line-opacity': hi(highlight, 0.95, 0.35),
+      'line-opacity-transition': { duration: 160 },
+      // 虛線：與行政區界線（實線）、站點（圓）都不會混淆
+      'line-dasharray': [2, 1.6],
+    } as never,
+  }),
+  /* 行進方向箭頭。
+     ★ 沿線重複放（symbol-placement: 'line'），**不是**只放終點 ——
+       終點就是那個站的座標，箭頭會整個被站點圓蓋住（實測確認）。
+       沿線放另有好處：線很長時中途就看得出方向，不必追到端點。
+     ★ icon 由 CityMap 程式產生後 addImage —— MAP_STYLE 刻意沒有 glyphs
+       （不依賴外部字型服務，現場網路不穩時 symbol 才不會整批消失），
+       所以不能用 text-field 畫箭頭字元。 */
+  arrow: (theme: Theme, highlight: number | null): LayerProps => ({
+    id: 'dispatch-arrow',
+    type: 'symbol',
+    source: 'dispatch',
+    layout: {
+      'icon-image': 'dispatch-arrow',
+      'symbol-placement': 'line',
+      'symbol-spacing': 46,
+      // 'map' = 箭頭跟著地圖轉，指的永遠是地理方向（不是螢幕方向）
+      'icon-rotation-alignment': 'map',
+      'icon-size': ['interpolate', ['linear'], ['zoom'], 9, 0.35, 13, 0.6, 16, 0.8],
+      'icon-allow-overlap': true,
+      'icon-ignore-placement': true,
+    },
+    paint: {
+      'icon-color': INFO[theme === 'light' ? 'light' : 'dark'],
+      'icon-opacity': hi(highlight, 1, 0.4),
+    } as never,
+  }),
+}
+
+/** 20×20 的實心三角形，**朝右**（+x）。
+    ★ 朝右不是朝上：symbol-placement:'line' 時 MapLibre 依「閱讀方向」旋轉
+      icon，也就是把 icon 的 +x 對齊線的前進方向。畫成朝上的話每個箭頭都會
+      再偏 90°。
+    sdf: true → 同一張圖用 icon-color 在深／淺主題各自上色，不必存兩份。 */
+export function arrowIcon(size = 20): { width: number; height: number; data: Uint8ClampedArray } {
+  const data = new Uint8ClampedArray(size * size * 4)
+  const cy = (size - 1) / 2
+  const left = 3
+  const right = size - 4
+  const maxHalf = size / 2 - 3
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) {
+      const t = (right - x) / (right - left) // 尖端在右、底邊在左
+      let a = 0
+      if (t >= 0 && t <= 1) {
+        const d = Math.abs(y - cy) - t * maxHalf
+        a = d <= -1 ? 1 : d >= 0 ? 0 : -d // 邊緣一格線性淡出，避免鋸齒
+      }
+      const i = (y * size + x) * 4
+      data[i] = 255
+      data[i + 1] = 255
+      data[i + 2] = 255
+      data[i + 3] = Math.round(a * 255)
+    }
+  }
+  return { width: size, height: size, data }
+}
+
+// 調度線也可點（顯示該筆詳情）；擺在站點之後 —— 兩者重疊時站點優先
+export const INTERACTIVE_LAYER_IDS = ['st-alert', 'st-base', 'dispatch-line']

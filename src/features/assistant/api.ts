@@ -2,7 +2,13 @@
    UI 僅呼叫 sendChat()。回應由後端組（即時查 DB 的 fast-path + AgentCore Harness）。 */
 
 import { getApiBase } from '@/api/client'
-import type { AssistantContext, ChatHandlers, ChatResult, WireMessage } from './types'
+import type {
+  AssistantContext,
+  AssistantDispatch,
+  ChatHandlers,
+  ChatResult,
+  WireMessage,
+} from './types'
 
 function endpoint(): string {
   return import.meta.env.VITE_ASSISTANT_URL || `${getApiBase()}/api/v1/assistant/chat`
@@ -30,11 +36,13 @@ export async function sendChat(
       list?: ChatResult['list']
       table?: ChatResult['table']
       suggestions?: ChatResult['suggestions']
+      dispatch?: AssistantDispatch
     }
     if (j.sources) h.onSources?.(j.sources)
     if (j.actions) h.onActions?.(j.actions)
     if (j.list) h.onList?.(j.list)
     if (j.table) h.onTable?.(j.table)
+    if (j.dispatch) h.onDispatch?.(j.dispatch)
     if (j.suggestions) h.onSuggestions?.(j.suggestions)
     if (j.reply) h.onDelta?.(j.reply)
     return {
@@ -44,6 +52,7 @@ export async function sendChat(
       list: j.list,
       table: j.table,
       suggestions: j.suggestions,
+      dispatch: j.dispatch,
     }
   }
 
@@ -56,6 +65,7 @@ export async function sendChat(
   let list: ChatResult['list']
   let table: ChatResult['table']
   let suggestions: ChatResult['suggestions']
+  let dispatch: AssistantDispatch | undefined
 
   for (;;) {
     const { done, value } = await reader.read()
@@ -74,6 +84,9 @@ export async function sendChat(
         columns?: unknown
         rows?: unknown
         message?: string
+        origin?: string
+        anchor?: unknown
+        shortfall?: number
       }
       try {
         ev = JSON.parse(line.slice(5).trim())
@@ -99,6 +112,15 @@ export async function sendChat(
           rows: (ev.rows ?? []) as NonNullable<ChatResult['table']>['rows'],
         }
         h.onTable?.(table)
+      } else if (ev.type === 'dispatch') {
+        // ★ 這個事件在 delta 之前到 —— 卡片先渲染，文案稍後才補上
+        dispatch = {
+          origin: ev.origin ?? '',
+          anchor: ev.anchor as AssistantDispatch['anchor'],
+          items: (ev.items ?? []) as AssistantDispatch['items'],
+          shortfall: ev.shortfall ?? 0,
+        }
+        h.onDispatch?.(dispatch)
       } else if (ev.type === 'suggestions') {
         suggestions = ev.items as ChatResult['suggestions']
         if (suggestions) h.onSuggestions?.(suggestions)
@@ -107,5 +129,5 @@ export async function sendChat(
       }
     }
   }
-  return { content, sources, actions, list, table, suggestions }
+  return { content, sources, actions, list, table, suggestions, dispatch }
 }

@@ -19,7 +19,7 @@ export function LoginPage() {
   const loc = useLocation()
 
   const isMock = authMode() === 'mock'
-  const [account, setAccount] = useState(isMock ? 'chang.zc' : '')
+  const [account, setAccount] = useState(isMock ? 'IM_TEST' : '')
   // 非弱密碼，避免瀏覽器一直跳「帳密外洩」警告（mock 模式任意帳密皆可登入）
   const [password, setPassword] = useState(isMock ? '1qaz@WSX3edc' : '')
 

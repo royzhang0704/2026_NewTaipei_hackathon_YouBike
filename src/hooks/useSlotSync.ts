@@ -20,6 +20,8 @@ export function useSlotSync(time: Date | null) {
       slot.current = s
       qc.invalidateQueries({ queryKey: ['alerts'] })
       qc.invalidateQueries({ queryKey: ['station-day'] })
+      // 調度單：新一輪 risk_snapshot 進來後 dispatch_sweep 會收掉已完成／已失效的
+      qc.invalidateQueries({ queryKey: ['dispatch-orders'] })
     }
   }, [time, qc])
 }

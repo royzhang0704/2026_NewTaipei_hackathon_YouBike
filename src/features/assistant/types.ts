@@ -8,6 +8,7 @@
           data: { type:'actions',     items:AssistantAction[] }
           data: { type:'list',        title:string, items:AssistantListItem[] }
           data: { type:'table',       title:string, columns:AssistantTableCol[], rows:AssistantTableRow[] }
+          data: { type:'dispatch',    origin, anchor, items:AssistantDispatchItem[], shortfall }
           data: { type:'suggestions', items:string[] }
           data: { type:'done' }
           data: { type:'error',       message:string }
@@ -54,6 +55,20 @@ export interface AssistantTableRow {
   cells: string[]
 }
 
+/* ── 調度候選卡（intent='dispatch' 的按鈕路徑）────────────────
+   ★ 這個事件**先於** delta 送達：候選是程式算的（毫秒），文案要等
+     Bedrock（2~5 秒）。使用者一進來就能勾選、按確認，不必等 LLM。
+   型別直接沿用 api/types.ts 的契約 —— 同一份資料，不另立一套。 */
+export type { DispatchCandidate as AssistantDispatchItem } from '@/api/types'
+
+export interface AssistantDispatch {
+  origin: string
+  anchor: import('@/api/types').DispatchAnchor
+  items: import('@/api/types').DispatchCandidate[]
+  /** > 0 = 候選湊不滿，差額要調度中心備用車 */
+  shortfall: number
+}
+
 export interface ChatMessage {
   id: string
   role: ChatRole
@@ -64,6 +79,8 @@ export interface ChatMessage {
   list?: { title: string; items: AssistantListItem[] }
   /** 多區比較表格；答案文字只寫一句總結，數字看這裡 */
   table?: { title: string; columns: AssistantTableCol[]; rows: AssistantTableRow[] }
+  /** 調度候選卡（可勾選、可改台數、可確認）；Bedrock 掛掉時這張卡照樣在 */
+  dispatch?: AssistantDispatch
   /** 後續建議問題；僅顯示於最後一則助理訊息下方 */
   suggestions?: string[]
   /** 串流尚未收尾 */
@@ -96,6 +113,11 @@ export interface AssistantContext {
   /** true＝這次的 town_code/station_uid 是這輪才因使用者操作（切篩選／開站）變動的——
       後端據此優先信任這份 ctx，不被對話延續（上一句提過的區）蓋過去。平常不用帶。 */
   scope_just_changed?: boolean
+  /** ★ 'dispatch' = 從行動卡按鈕進來，後端**繞過整段 regex 意圖判斷**直接回候選。
+      按鈕點下去的意圖是 100% 確定的，再判一次只會引入失敗率。 */
+  intent?: 'dispatch'
+  /** intent='dispatch' 時必帶：使用者當初點的那個風險站 */
+  anchor_uid?: string
 }
 
 /** mock 與 live（SSE）共用的串流回呼 */
@@ -106,6 +128,7 @@ export interface ChatHandlers {
   onList?: (l: { title: string; items: AssistantListItem[] }) => void
   onTable?: (t: { title: string; columns: AssistantTableCol[]; rows: AssistantTableRow[] }) => void
   onSuggestions?: (s: string[]) => void
+  onDispatch?: (d: AssistantDispatch) => void
   signal?: AbortSignal
 }
 
@@ -116,4 +139,5 @@ export interface ChatResult {
   list?: { title: string; items: AssistantListItem[] }
   table?: { title: string; columns: AssistantTableCol[]; rows: AssistantTableRow[] }
   suggestions?: string[]
+  dispatch?: AssistantDispatch
 }

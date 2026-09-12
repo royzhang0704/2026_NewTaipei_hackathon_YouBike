@@ -9,14 +9,16 @@ import MapGL, {
 } from 'react-map-gl/maplibre'
 import type { FeatureCollection } from 'geojson'
 import { Maximize } from 'lucide-react'
-import { useAlerts, useStations, useTowns } from '@/api/queries'
+import { useAlerts, useCancelDispatch, useDispatchOrders, useStations, useTowns } from '@/api/queries'
 import { FONT_PCT, useAppStore } from '@/stores/useAppStore'
 import { cn } from '@/lib/utils'
-import type { AlertItem } from '@/api/types'
+import type { AlertItem, DispatchOrder } from '@/api/types'
 import districtsGeo from '@/assets/newtaipei-districts.json'
 import outlineGeo from '@/assets/newtaipei-outline.json'
 import {
+  arrowIcon,
   bgLayer,
+  DISPATCH_LAYERS,
   DISTRICT_LAYERS,
   HAS_BASEMAP,
   INTERACTIVE_LAYER_IDS,
@@ -41,12 +43,20 @@ interface HoverInfo {
   action: string
 }
 
+/** 點到調度線時顯示的那一筆。 */
+interface OrderInfo {
+  lng: number
+  lat: number
+  order: DispatchOrder
+}
+
 /** 高度由外層容器決定（桌機 flex 填滿、手機給固定高）。 */
 export function CityMap() {
   const mapRef = useRef<MapRef>(null)
   const wrapRef = useRef<HTMLDivElement>(null)
   const [ready, setReady] = useState(false)
   const [hover, setHover] = useState<HoverInfo | null>(null)
+  const [orderPop, setOrderPop] = useState<OrderInfo | null>(null)
   const hoverClear = useRef<ReturnType<typeof setTimeout>>(undefined)
 
   const townCode = useAppStore((s) => s.townCode)
@@ -55,12 +65,18 @@ export function CityMap() {
   const refocus = useAppStore((s) => s.refocus)
   const selectStation = useAppStore((s) => s.selectStation)
   const theme = useAppStore((s) => s.theme)
+  const highlightOrderId = useAppStore((s) => s.highlightOrderId)
   const fontScale = useAppStore((s) => s.fontScale)
 
   const { data: stations, isPending: stPending, isError: stError } = useStations()
   const { data: towns } = useTowns()
   // 取全市資料（不隨 townCode 縮小）：圖層依行政區自行過濾，使跨區選取的站點亦有正確風險樣式，且不產生樣式閃爍
   const { data: alerts } = useAlerts({ limit: 1000 })
+  // ★ 不吃 town_code：跨區調度的兩端分屬不同區，用區篩會把線切斷
+  const { data: orders } = useDispatchOrders()
+  const cancelOrder = useCancelDispatch()
+  const ordersRef = useRef<DispatchOrder[]>([])
+  ordersRef.current = orders?.items ?? []
 
   const townName = useMemo(
     () => towns?.find((t) => t.town_code === townCode)?.town ?? '',
@@ -91,9 +107,52 @@ export function CityMap() {
     }
   }, [stations, alerts])
 
+  /* 調度線 geojson：每筆單一條 LineString（from → to）。
+     ★ 座標順序就是行進方向 —— 箭頭層用 symbol-placement:'line' 沿線放，
+       方向由 MapLibre 依線的走向決定，不必自己算 bearing。 */
+  const dispatchGeo = useMemo<FeatureCollection>(() => {
+    const feats: FeatureCollection['features'] = []
+    for (const o of orders?.items ?? []) {
+      const { from, to } = o
+      if (from.lat == null || from.lon == null || to.lat == null || to.lon == null) continue
+      feats.push({
+        type: 'Feature',
+        geometry: {
+          type: 'LineString',
+          coordinates: [
+            [from.lon, from.lat],
+            [to.lon, to.lat],
+          ],
+        },
+        properties: { id: o.id, bikes: o.bikes, action: o.action },
+      })
+    }
+    return { type: 'FeatureCollection', features: feats }
+  }, [orders])
+
+  /** 調度線兩端的站 —— 選區時這些站要強制顯示，否則跨區的那一端會消失。 */
+  const dispatchUids = useMemo(() => {
+    const s = new Set<string>()
+    for (const o of orders?.items ?? []) {
+      s.add(o.from.uid)
+      s.add(o.to.uid)
+    }
+    return [...s]
+  }, [orders])
+
   const mask = useMemo(() => buildMask(townName), [townName])
 
   useDistrictFocus(mapRef, ready, townName, stations, frameNonce)
+
+  /* 箭頭 icon 用程式產生後 addImage —— MAP_STYLE 刻意沒有 glyphs（不依賴外部
+     字型服務，現場網路不穩時才不會整批 symbol 消失），所以不能用 text-field。
+     sdf: true → 同一張圖用 icon-color 在深／淺主題各自上色，不必存兩份。 */
+  useEffect(() => {
+    const map = mapRef.current?.getMap()
+    if (!ready || !map) return
+    if (map.hasImage('dispatch-arrow')) return
+    map.addImage('dispatch-arrow', arrowIcon(), { sdf: true })
+  }, [ready])
 
   // 容器尺寸一變就 resize()：flex 高度鏈落定、中文字型載入、重整帶抽屜、breakpoint、切字級
   // 上述任一情況造成的容器尺寸變化，react-map-gl 內建偵測與 dev 模式 reuseMaps 偶有時序遺漏，此處作為後備。
@@ -192,6 +251,17 @@ export function CityMap() {
 
   const onClick = useCallback(
     (e: MapLayerMouseEvent) => {
+      // 調度線：顯示該筆詳情，不改選取的站（點線的意圖是「這趟車是什麼」）
+      const line = e.features?.find((f) => f.layer?.id === 'dispatch-line')
+      if (line) {
+        const id = line.properties?.id as number | undefined
+        const o = ordersRef.current.find((x) => x.id === id)
+        if (o) {
+          setOrderPop({ lng: e.lngLat.lng, lat: e.lngLat.lat, order: o })
+          return
+        }
+      }
+      setOrderPop(null)
       const uid = e.features?.[0]?.properties?.uid as string | undefined
       selectStation(uid ?? null)
     },
@@ -349,11 +419,17 @@ export function CityMap() {
           <Layer {...DISTRICT_LAYERS.lineSel(townName)} />
         </Source>
 
+        {/* 調度路線：掛在 stations **之前** → 線壓在站點下方，不蓋住風險圓點 */}
+        <Source id="dispatch" type="geojson" data={dispatchGeo}>
+          <Layer {...DISPATCH_LAYERS.line(theme, highlightOrderId)} />
+          <Layer {...DISPATCH_LAYERS.arrow(theme, highlightOrderId)} />
+        </Source>
+
         <Source id="stations" type="geojson" data={geojson}>
-          <Layer {...STATION_LAYERS.glow(townName)} />
-          <Layer {...STATION_LAYERS.pulse(townName)} />
-          <Layer {...STATION_LAYERS.base(townName, selectedUid, theme)} />
-          <Layer {...STATION_LAYERS.alert(townName, selectedUid, theme)} />
+          <Layer {...STATION_LAYERS.glow(townName, dispatchUids)} />
+          <Layer {...STATION_LAYERS.pulse(townName, dispatchUids)} />
+          <Layer {...STATION_LAYERS.base(townName, selectedUid, theme, dispatchUids)} />
+          <Layer {...STATION_LAYERS.alert(townName, selectedUid, theme, dispatchUids)} />
           <Layer {...STATION_LAYERS.selected(selectedUid, theme)} />
         </Source>
 
@@ -371,6 +447,42 @@ export function CityMap() {
                 {hover.action === 'refill' ? '建議補' : '建議取'} {hover.bikes} 台
               </>
             ) : null}
+          </Popup>
+        )}
+
+        {/* 點調度線 → 該筆詳情。★ created_slot 是虛擬時鐘、operator 是 demo 寫死值 */}
+        {orderPop && (
+          <Popup
+            longitude={orderPop.lng}
+            latitude={orderPop.lat}
+            closeButton
+            closeOnClick={false}
+            onClose={() => setOrderPop(null)}
+            offset={10}
+          >
+            <b className="text-[0.78rem]">
+              {orderPop.order.from.name} → {orderPop.order.to.name}
+            </b>
+            <br />
+            調度 {orderPop.order.bikes} 台
+            {orderPop.order.distance_m != null && (
+              <> · 直線 {orderPop.order.distance_m} m</>
+            )}
+            <br />
+            <span className="text-ink3">
+              {orderPop.order.operator} {orderPop.order.created_slot.slice(11, 16)} 確認
+            </span>
+            <br />
+            <button
+              type="button"
+              onClick={() => {
+                cancelOrder.mutate(orderPop.order.id)
+                setOrderPop(null)
+              }}
+              className="mt-1 text-[0.72rem] text-hot underline underline-offset-2"
+            >
+              撤銷這筆
+            </button>
           </Popup>
         )}
       </MapGL>

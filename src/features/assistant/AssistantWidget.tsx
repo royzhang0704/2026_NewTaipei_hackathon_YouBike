@@ -18,6 +18,7 @@ import { useAssistantStore } from '@/stores/useAssistantStore'
 import { segChip } from '@/components/ui/segChip'
 import { cn } from '@/lib/utils'
 import { sendChat } from './api'
+import { DispatchCard } from './DispatchCard'
 import type { ChatMessage } from './types'
 
 const uid = () => Math.random().toString(36).slice(2, 10)
@@ -105,6 +106,8 @@ export function AssistantWidget() {
   const open = useAssistantStore((s) => s.open)
   const setOpen = useAssistantStore((s) => s.setOpen)
   const toggle = useAssistantStore((s) => s.toggle)
+  const pendingDispatch = useAssistantStore((s) => s.pendingDispatch)
+  const clearDispatch = useAssistantStore((s) => s.clearDispatch)
 
   const townCode = useAppStore((s) => s.townCode)
   const selectedUid = useAppStore((s) => s.selectedUid)
@@ -229,7 +232,11 @@ export function AssistantWidget() {
   }
 
   // 把 wire 對話送出，答案寫進 botId 這則訊息（send 與 retry 共用）
-  async function runQuery(wire: { role: 'user' | 'assistant'; content: string }[], botId: string) {
+  async function runQuery(
+    wire: { role: 'user' | 'assistant'; content: string }[],
+    botId: string,
+    extra?: Partial<import('./types').AssistantContext>,
+  ) {
     setSending(true)
     setAnnounce('')
     const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches
@@ -249,6 +256,7 @@ export function AssistantWidget() {
           virtual_now: dataNow,
           thread_id: threadId,
           scope_just_changed: scopeJustChanged,
+          ...extra,
         },
         {
           signal: ac.signal,
@@ -259,6 +267,9 @@ export function AssistantWidget() {
           onList: (l) => patchMsg(botId, () => ({ list: l })),
           onTable: (t) => patchMsg(botId, () => ({ table: t })),
           onSuggestions: (s) => patchMsg(botId, () => ({ suggestions: s })),
+          // ★ 這個事件先於 delta 到（候選是程式算的）——立刻補上卡片，
+          //   使用者不必等 Bedrock 那 5~7 秒才看到能點的東西。
+          onDispatch: (d) => patchMsg(botId, () => ({ dispatch: d })),
         },
       )
       patchMsg(botId, (m) => ({
@@ -268,6 +279,7 @@ export function AssistantWidget() {
         list: res.list,
         table: res.table,
         suggestions: res.suggestions,
+        dispatch: res.dispatch,
         pending: false,
         failed: false,
       }))
@@ -309,6 +321,34 @@ export function AssistantWidget() {
     ])
     runQuery([...prior, { role: 'user', content: q }], botId)
   }
+
+  /** 行動卡按鈕進來的調度請求。
+      ★ 帶 intent='dispatch' → 後端**繞過整段 regex 意圖判斷**直接回候選。
+        問句只是給對話串留個可讀的紀錄，後端不拿它判意圖。 */
+  function sendDispatch(r: { anchorUid: string; anchorName: string; action: 'refill' | 'remove' }) {
+    if (sending) return
+    const q = r.action === 'refill' ? `${r.anchorName} 從哪調車過來？` : `${r.anchorName} 的車調去哪？`
+    stickRef.current = true
+    const now = Date.now()
+    const botId = uid()
+    setMessages((ms) => [
+      ...ms,
+      { id: uid(), role: 'user', content: q, at: now, virtualAt: dataNow },
+      { id: botId, role: 'assistant', content: '', pending: true, at: now, virtualAt: dataNow, query: q, dataAt: curSlot },
+    ])
+    runQuery([{ role: 'user', content: q }], botId, {
+      intent: 'dispatch',
+      anchor_uid: r.anchorUid,
+    })
+  }
+
+  // 行動卡把請求放進 store → 這裡取走、送出、清空（Widget 才有訊息串）
+  useEffect(() => {
+    if (!pendingDispatch || sending) return
+    sendDispatch(pendingDispatch)
+    clearDispatch()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingDispatch, sending])
 
   // 就地重試：將該則轉回 pending（不移除、不重新加入），避免範例訊息閃現
   function retry(id: string) {
@@ -513,6 +553,8 @@ export function AssistantWidget() {
                           <span className="ml-0.5 animate-pulse text-ink3 motion-reduce:animate-none">▍</span>
                         )}
                       </p>
+
+                      {m.dispatch && <DispatchCard d={m.dispatch} />}
 
                       {!!m.list?.items.length && (
                         <div className="mt-2 overflow-hidden rounded-xs border border-hair">

@@ -15,6 +15,10 @@ export interface Health {
   forecast_left_min: number | null
   last_tick: string | null
   tick_age_min: number | null
+  /** demo 回放走到 demo_until 之後的續走倍率；1 = 即時。
+      ★ 調度只在 1x 開放（見 StationDetail 的入口按鈕）。 */
+  demo_tail_speed?: number | null
+  demo_auto_slow?: boolean
 }
 
 export interface Town {
@@ -177,6 +181,73 @@ export interface AlertsResponse {
   limit: number
   offset: number
   source: string
+}
+
+/* ── 調度單（meet/20260912/計劃-調度確認.md §5）────────────────
+   from/to 是**車的方向**；哪一端是風險站看 anchor_uid —— 兩端都可能有燈
+   （候選站本身是滿站高風險時，一趟車解決兩站）。 */
+export type DispatchStatus = 'active' | 'fulfilled' | 'invalid'
+
+export interface DispatchEnd {
+  uid: string
+  name: string | null
+  town: string | null
+  lat: number | null
+  lon: number | null
+}
+
+export interface DispatchOrder {
+  id: number
+  action: 'refill' | 'remove' // 站在 anchor 的立場
+  bikes: number
+  anchor_uid: string
+  status: DispatchStatus
+  from: DispatchEnd
+  to: DispatchEnd
+  distance_m: number | null
+  created_slot: string // ★ 虛擬時鐘，不是真實時間
+  operator: string // ★ 不可信，一律 IM_TEST（後端寫死）
+}
+
+export interface DispatchOrdersResponse {
+  origin: string | null
+  items: DispatchOrder[]
+}
+
+/** 候選站（助理 SSE {type:'dispatch'} 與 GET /dispatch/candidates 共用）。 */
+export interface DispatchCandidate {
+  uid: string
+  name: string
+  town: string
+  cross_town: boolean
+  supply: number // 這站能安全給出的最多台數（已扣其他 active 單的承諾）
+  distance_m: number | null
+  bikes: number // 本筆建議台數
+  selected: boolean // 預設勾選
+  level: 'high' | 'mid' | 'low' | 'none'
+  note: string | null
+}
+
+export interface DispatchAnchor {
+  uid: string
+  name: string
+  town: string
+  action: 'refill' | 'remove'
+  need: number // 還缺幾台 = 本輪建議台數 − 已派出的 active 承諾
+  already: number
+}
+
+export interface DispatchCandidates {
+  origin: string
+  anchor: DispatchAnchor
+  items: DispatchCandidate[]
+  shortfall: number // > 0 = 湊不滿，差額要調度中心備用車
+}
+
+export interface DispatchCreated {
+  written: number
+  origin: string
+  ids: number[]
 }
 
 export interface ApiError {

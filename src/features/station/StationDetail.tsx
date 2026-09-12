@@ -1,7 +1,9 @@
 import { lazy, Suspense, useEffect, useMemo, useRef } from 'react'
-import { AlertTriangle, ExternalLink, MapPin } from 'lucide-react'
+import { AlertTriangle, ExternalLink, MapPin, Truck } from 'lucide-react'
 import type { StationDay } from '@/api/types'
-import { useStations } from '@/api/queries'
+import { useDispatchOrders, useHealth, useStations } from '@/api/queries'
+import { useAppStore } from '@/stores/useAppStore'
+import { useAssistantStore } from '@/stores/useAssistantStore'
 import { actionBlock } from '@/lib/risk'
 import { hhmm, mdhm } from '@/lib/format'
 import { cn } from '@/lib/utils'
@@ -10,6 +12,94 @@ import { cn } from '@/lib/utils'
 const ForecastChart = lazy(() =>
   import('./ForecastChart').then((m) => ({ default: m.ForecastChart })),
 )
+
+/* ── 調度入口（行動卡底部）────────────────────────────────────
+   ★ 這是調度功能的**唯一入口**（計劃-調度確認.md §16）：助理可以打字問，
+     但「發起一次調度」只有從這裡按。入口收斂在單站頁的行動卡上，
+     因為要派幾台、從哪派，都以「這一站」為錨點。 */
+function DispatchEntry({
+  uid,
+  name,
+  actionKind,
+  need,
+}: {
+  uid: string
+  name: string
+  actionKind: 'refill' | 'remove' | 'hold' | 'none'
+  need: number | null
+}) {
+  const askDispatch = useAssistantStore((s) => s.askDispatch)
+  const highlightOrder = useAppStore((s) => s.highlightOrder)
+  const { data: health } = useHealth()
+  const { data: orders } = useDispatchOrders()
+
+  // hold（預計自行消退）與 none（無風險）沒有調度可發起 —— 後端也會擋，
+  // 但按鈕根本不該出現：讓人按下去才被拒絕是最糟的回饋。
+  if (actionKind !== 'refill' && actionKind !== 'remove') return null
+
+  /* ★ 只有「虛擬時間不會跑掉」時才開放調度。擋在**按鈕層級**，不是確認層級
+       —— 不能讓使用者問完 Bedrock、勾完選才被擋。
+       （60x 回放下一格 = 30 真實秒，讀完文案早已跨輪，寫入必定 DISPATCH_STALE。）
+
+     ★ 0 與 1 都放行：計劃原訂「只有 1x」，但 demo_tail_speed = 0 的語意是
+       **停表**（走完 demo_until 之後不再前進，見 sys_config_repo.effective_now），
+       虛擬時間根本不動，跨輪機率是零 —— 比 1x 還安全。照字面只認 1 的話，
+       停表狀態下整個調度入口會全部點不到。真正要擋的是 > 1 的快轉。 */
+  const speed = health?.demo_tail_speed
+  const fast = speed != null && speed > 1
+  const mine = (orders?.items ?? []).filter((o) => o.anchor_uid === uid)
+  const sent = mine.reduce((s, o) => s + o.bikes, 0)
+  const left = need == null ? null : Math.max(0, need - sent)
+  const froms = mine
+    .map((o) => (actionKind === 'refill' ? o.from.name : o.to.name))
+    .filter(Boolean)
+
+  return (
+    <div className="mt-[10px] border-t border-hair pt-[9px]">
+      <div className="flex flex-wrap items-center gap-2">
+        <button
+          type="button"
+          disabled={fast}
+          title={fast ? '回放加速中，請切回 1x 再進行調度' : undefined}
+          onClick={() => askDispatch({ anchorUid: uid, anchorName: name, action: actionKind })}
+          className={cn(
+            'flex items-center gap-[5px] rounded-xs border px-2 py-[3px] text-[0.72rem]',
+            fast
+              ? 'cursor-not-allowed border-edge text-ink3 opacity-55'
+              : 'border-info/55 text-info hover:bg-info-wash',
+          )}
+        >
+          <Truck className="size-[12px]" aria-hidden />
+          {actionKind === 'refill' ? '找車來補' : '找站調出'}
+        </button>
+        {fast && (
+          <span className="text-[0.66rem] text-ink3">回放加速中，切回 1x 才能調度</span>
+        )}
+      </div>
+
+      {sent > 0 && (
+        <p className="m-0 mt-[6px] flex flex-wrap items-baseline gap-x-2 text-[0.7rem] leading-[1.5] text-ink3">
+          <span>
+            已調度 <b className="num font-medium text-info">{sent}</b> 台
+            {froms.length > 0 && <span> · 來自 {froms.join('、')}</span>}
+          </span>
+          {left != null && left > 0 && (
+            <span>
+              還缺 <b className="num font-medium text-ink2">{left}</b> 台
+            </span>
+          )}
+          <button
+            type="button"
+            onClick={() => highlightOrder(mine[0].id)}
+            className="text-info underline underline-offset-2"
+          >
+            查看
+          </button>
+        </p>
+      )}
+    </div>
+  )
+}
 
 /** 站名 + 行政區／車柱數／基準時刻 + 地址列。正常與「查無資料」兩種畫面共用。 */
 function StationHead({ st, origin }: { st: StationDay['station']; origin: string | null }) {
@@ -182,6 +272,13 @@ export function StationDetail({ day }: { day: StationDay }) {
               {ab.support}
             </p>
           )}
+
+          <DispatchEntry
+            uid={st.uid}
+            name={st.name}
+            actionKind={ab.actionKind}
+            need={day.risk?.dispatch?.bikes ?? null}
+          />
         </div>
       )}
 

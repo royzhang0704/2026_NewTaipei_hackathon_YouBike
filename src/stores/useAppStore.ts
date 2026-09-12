@@ -42,6 +42,9 @@ interface SelectionSlice {
   setTownQuiet: (code: string) => void
   /** 縮放/拖曳後把鏡頭框回目前選取的預設範圍 */
   refocus: () => void
+  /** 行動卡「查看」指向的那筆調度單 —— 地圖把該線加粗、其餘淡化。null = 不高亮。 */
+  highlightOrderId: number | null
+  highlightOrder: (id: number | null) => void
 }
 
 /* 主動警示清單的篩選 —— 提到 store 讓上方 KPI 也能寫（點 KPI = 套用該篩選）。
@@ -83,6 +86,8 @@ export const useAppStore = create<SelectionSlice & ThemeSlice & AlertFilterSlice
   selectedUid: null,
   frameNonce: 0,
   selectStation: (uid) => set({ selectedUid: uid }),
+  highlightOrderId: null,
+  highlightOrder: (id) => set({ highlightOrderId: id }),
   selectTown: (code) => {
     const same = code === get().townCode
     set((s) => ({

@@ -19,7 +19,10 @@ function endpoint(path: string): string {
 /** 已知帳號 → 姓名 / 角色（mock 用，模擬「登入後由目錄服務補上」）。
     不在表內的帳號一律以帳號字串當名稱 —— mock 模式維持「任意帳密可進」。 */
 const DEMO_ACCOUNTS: Record<string, { name: string; role: string }> = {
-  'chang.zc': { name: '張志強', role: '調度主管' },
+  // ★ 與後端 dispatch_order.operator 的寫死值一致（sql/70 欄註解）——
+  //   畫面上「IM_TEST 10:05 確認」是 demo 呈現，不是可信的身分。
+  //   key 要小寫：查表走 a.toLowerCase()。
+  im_test: { name: 'IM_TEST', role: '調度主管' },
 }
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))

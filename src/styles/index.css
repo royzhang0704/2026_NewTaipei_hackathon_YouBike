@@ -38,6 +38,12 @@
   --color-hot-wash-weak: rgba(238, 90, 52, 0.06);
   --color-cold-wash-weak: rgba(90, 134, 214, 0.06);
 
+  /* info：調度線（站對站的「動作」，不是站本身的狀態）。
+     ★ 色相 ~170°（青綠），離 hot 15°／gold 40°／cold 220° 都最遠 —— 地圖上
+       一條線壓在 hot / cold 站點之間時，必須一眼就看出「這不是某種風險」。 */
+  --color-info: #3fb9a5;
+  --color-info-wash: rgba(63, 185, 165, 0.14);
+
   --radius-xs: 2px;
   --radius-sm: 4px; /* 浮層（Popover / 卡片）用；2px 在大面積元素偏生硬 */
 
@@ -85,6 +91,11 @@
   --color-cold-wash: rgba(40, 97, 207, 0.1);
   --color-hot-wash-weak: rgba(198, 70, 31, 0.05);
   --color-cold-wash-weak: rgba(40, 97, 207, 0.05);
+  /* info 在白底也當小字用（調度標籤）→ 同 hot / gold 的處理，壓深到兩種底都過 AA：
+     #0e7a6f 在 panel(#fff) 5.21:1、在 bg(#f4f3ef) 4.69:1。
+     （計劃原訂的 #12867a 只有 4.45 / 4.01，白底就差一點、米底明顯不足。） */
+  --color-info: #0e7a6f;
+  --color-info-wash: rgba(14, 122, 111, 0.12);
   --color-focus: #1f5fe0;
 }
 
