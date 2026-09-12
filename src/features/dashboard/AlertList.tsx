@@ -174,10 +174,10 @@ export function AlertList() {
                   <span className="whitespace-nowrap text-right tracking-[0.04em] text-ink3">
                     {/* 右欄固定 3 行：可借 X／Y ／ 建議補／取 N 台 ／ 已 X 小時。
                         前兩行同字級；已 X 小時較小；先不上色（暖／冷），之後要加再說。 */}
-                    <b className="num block text-[1rem] tracking-[-0.02em]">
+                    <b className="num block text-[0.85rem] tracking-[-0.02em]">
                       可借 {it.now.avail ?? '—'}／{it.capacity ?? '?'}
                     </b>
-                    <b className="num block text-[1rem] tracking-[-0.02em]">
+                    <b className="num block text-[0.85rem] tracking-[-0.02em]">
                       {it.dispatch
                         ? `${it.dispatch.action === 'refill' ? '建議補 ' : it.dispatch.action === 'remove' ? '建議取 ' : ''}${it.dispatch.bikes} 台`
                         : '—'}
