@@ -193,12 +193,19 @@ SLOT_AVG_MIN_N = 10
 
 # ── 風險判定的演算法版本（9/1）──
 #   寫進 risk_snapshot.algo_ver 與 forecast_run.risk_algo_ver。
-#   ★ 改門檻（RISK_PCT/MIN/MAX）或改分級規則（risk_service）就要改這個字串：
+#   ★ 改門檻（RISK_PCT/MIN/MAX）、改分級規則（risk_service）或改 streak
+#     口徑就要改這個字串：
 #     ① 冪等判定會失效 → 舊 origin 會被重判（--risk-only，不打 SageMaker）
 #     ② streak 隨即重新起算 —— 跨版本的「連續 N 輪」沒有意義
-#   格式：<分級制>/<門檻參數>。time-v1 = 8/31 定案的時間制分級
+#   格式：<分級制>/<門檻參數>。分級規則沿用 8/31 定案的時間制分級
 #   （高=現況已越線且近 1 小時仍越線／中=1HR 內／低=1~3HR 內／無=不越線）。
-RISK_ALGO_VER = "time-v1/pct15"
+#   ★ v1 → v2（9/12）：分級規則一字未改，改的是 **streak 口徑** ——
+#     從 overall（level_n >= 1）縮成只算高風險（level_n = 3）。中低風險
+#     每輪隨預測擺動亮滅，「已持續 N 小時」對它們沒有調度意義。
+#     口徑變了就必須換版，否則 same_ver 成立、舊的 overall streak 會被
+#     直接接到新口徑上，出來的數字是兩種定義混在一起的。
+#     ⚠ 水位停滯（stale_since）刻意**不**吃這個版本號，見 sql/64_。
+RISK_ALGO_VER = "time-v2/pct15"
 
 # ── level30 滾動視窗（計劃-排程自癒 §2）──
 #   ★ 留 14 天而非 7：給 Job C 補洞與驗證重跑留餘裕。retention 在階段②實作。

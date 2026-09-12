@@ -90,7 +90,10 @@ def _urgent_list(items: list[dict], n: int = 8) -> list[dict]:
          "等級": C.LV_WORD.get(i["level"], i["level"]),
          "建議": C.act_phrase(i.get("dispatch")),
          "可借": (i.get("now") or {}).get("avail"),
-         "已持續小時": (i.get("streak") or {}).get("hours")}
+         # 兩個時數語意不同：前者是「高風險連續幾小時」（只有高風險站有值），
+         # 後者是「可借數卡在同一個數字幾小時」（疑似斷線／車輛沒在流動）
+         "已持續小時": (i.get("streak") or {}).get("hours"),
+         "水位停滯小時": (i.get("stale") or {}).get("hours")}
         for i in items[:n]
     ]
 

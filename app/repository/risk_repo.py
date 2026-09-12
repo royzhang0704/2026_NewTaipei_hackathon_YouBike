@@ -18,11 +18,14 @@ KEYS = ("origin", "station_uid")
 COLS = ("run_id", "origin", "station_uid", "status", "level_n", "shortage_n", "full_n",
         "side", "conflict", "confidence", "threshold", "onset",
         "now_avail", "now_carried", "now_crossed", "baseline",
-        "action", "bikes", "basis", "streak_n", "streak_since", "algo_ver")
+        "action", "bikes", "basis", "streak_n", "streak_since",
+        "stale_avail", "stale_since", "algo_ver")
 
 # 排序（固定，不開放參數）：
 #   高>中>低 是第一鍵；streak 當第二鍵 —— 連 6 輪（3 小時）沒改善的站
 #   要排在剛亮燈的站前面，這正是記 streak 的用途。
+#   ⚠ 9/12 起 streak 只算高風險，中低風險的 streak_n 一律 0 —— 那兩群
+#     組內實際上退化成以 bikes 排序，已知且接受（要排序的是高風險群）。
 ORDER_BY = ("ORDER BY r.level_n DESC, r.streak_n DESC, r.bikes DESC NULLS LAST, "
             "r.onset ASC, r.station_uid")
 
@@ -47,10 +50,14 @@ def upsert_many(rows: list[tuple]) -> int:
 
 
 def prev(origin: datetime) -> dict[str, dict]:
-    """上一輪（origin 本身就要傳「上一輪的 origin」）的 streak 遞推來源。"""
+    """上一輪（origin 本身就要傳「上一輪的 origin」）的遞推來源。
+
+    兩套遞推共用這一次查詢：streak（吃 algo_ver）與水位停滯（不吃）。
+    """
     with get_conn().cursor() as cur:
         cur.execute(
-            "SELECT station_uid, status, level_n, streak_n, streak_since, algo_ver "
+            "SELECT station_uid, status, level_n, streak_n, streak_since, "
+            "       stale_avail, stale_since, algo_ver "
             "  FROM hackathon_backend_risk_snapshot WHERE origin = %s", (origin,))
         return {r["station_uid"]: r for r in cur.fetchall()}
 
@@ -122,7 +129,7 @@ def station_history(station_uid: str, n: int = 48) -> list[dict]:
     with get_conn().cursor() as cur:
         cur.execute(
             "SELECT origin, status, level_n, side, streak_n, streak_since, "
-            "       now_avail, threshold, action, bikes "
+            "       stale_avail, stale_since, now_avail, threshold, action, bikes "
             "  FROM hackathon_backend_risk_snapshot "
             " WHERE station_uid = %s ORDER BY origin DESC LIMIT %s", (station_uid, n))
         return cur.fetchall()
@@ -141,11 +148,13 @@ if __name__ == "__main__":
     u = [r["station_uid"] for r in st]
     tc = st[0]["town_code"]
 
-    def row(origin, uid, status, lv, sn, since, action=None, bikes=None, side=None):
+    def row(origin, uid, status, lv, sn, since, action=None, bikes=None, side=None,
+            stale_avail=1, stale_since=None):
         return (None, origin, uid, status, lv, lv if side == "shortage" else None,
                 lv if side == "full" else None, side, None, "likely", 3,
                 origin if lv == 3 else None, 1, False, lv == 3, 5.0,
-                action, bikes, "slot_average", sn, since, "__smoke__")
+                action, bikes, "slot_average", sn, since,
+                stale_avail, stale_since or origin, "__smoke__")
 
     print("── ① 寫一輪三站（高／無／no_forecast）")
     n = upsert_many([row(O1, u[0], "ok", 3, 1, O1, "refill", 7, "shortage"),
@@ -165,13 +174,17 @@ if __name__ == "__main__":
     print(f"   高 {s['risk_high']}／無 {s['risk_none']}／無預測 {s['risk_no_forecast']}"
           f"／補車 {s['refill_stations']} 站 {s['refill_bikes']} 台 ✓")
 
-    print("── ④ 同區過濾 + prev（streak 遞推來源）")
+    print("── ④ 同區過濾 + prev（streak／水位停滯兩套遞推的來源）")
     assert count(O1, town_code=tc) >= 0
-    upsert_many([row(O2, u[0], "ok", 3, 2, O1, "refill", 7, "shortage")])
+    # O2 水位仍是 1（同 O1）→ stale_since 沿用 O1，不跟著 origin 走
+    upsert_many([row(O2, u[0], "ok", 3, 2, O1, "refill", 7, "shortage",
+                     stale_avail=1, stale_since=O1)])
     p = prev(O1)
     assert p[u[0]]["streak_n"] == 1 and p[u[0]]["algo_ver"] == "__smoke__"
+    assert p[u[0]]["stale_avail"] == 1 and p[u[0]]["stale_since"] == O1
     print(f"   prev(O1)[{u[0]}] streak={p[u[0]]['streak_n']}；"
-          f"O2 遞推到 {prev(O2)[u[0]]['streak_n']} ✓")
+          f"O2 遞推到 {prev(O2)[u[0]]['streak_n']}；"
+          f"stale_since 仍是 {prev(O2)[u[0]]['stale_since']:%H:%M} ✓")
 
     print("── ⑤ upsert 覆蓋（同 PK 重寫不新增列）")
     upsert_many([row(O1, u[0], "ok", 2, 9, O1, "refill", 3, "shortage")])

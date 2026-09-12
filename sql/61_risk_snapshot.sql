@@ -54,6 +54,9 @@ CREATE TABLE IF NOT EXISTS public.hackathon_backend_risk_snapshot (
   -- ── 持續 ──
   streak_n      int         NOT NULL DEFAULT 0,
   streak_since  timestamp,
+  -- ── 水位停滯（9/12 新增，見 64_streak_high_stale.sql）──
+  stale_avail   int,
+  stale_since   timestamp,
   -- ── 溯源 ──
   algo_ver      text        NOT NULL,
   created_at    timestamptz NOT NULL DEFAULT now(),
@@ -109,9 +112,13 @@ COMMENT ON COLUMN public.hackathon_backend_risk_snapshot.bikes IS
 COMMENT ON COLUMN public.hackathon_backend_risk_snapshot.basis IS
   'slot_average = 用歷史同時段常態算的（正常路徑）；threshold = 查無該桶或樣本不足，退回「門檻 − 路徑極值 + 1」的保底算法。';
 COMMENT ON COLUMN public.hackathon_backend_risk_snapshot.streak_n IS
-  '★ 連續處於風險的輪數（overall 口徑，9/1 定案不分缺車／滿站兩側）。遞推規則：本輪有風險且上一輪（origin-30min）也有風險且 algo_ver 相同 → 前值+1；上一輪無風險／查無列／換版 → 1；本輪無風險 → 0；status=no_forecast → 沿用前值不遞增（漏打一站不代表風險消失，但也沒有證據說又持續了一輪）。排行的第二排序鍵。';
+  '★ 連續處於**高風險**的輪數（9/12 改口徑，原本是 overall level_n >= 1，不分缺車／滿站兩側）。遞推規則：本輪 level_n = 3 且上一輪（origin-30min）也是高風險且 algo_ver 相同 → 前值+1；上一輪非高／查無列／換版 → 1；本輪非高（含中、低、無）→ 0；status=no_forecast → 沿用前值不遞增（漏打一站不代表風險消失，但也沒有證據說又持續了一輪）。★ 為什麼不算中低：中低的定義是「預測 1~3 小時內會越線」，會隨預測擺動反覆亮滅，持續時數沒有調度意義。排行的第二排序鍵 —— 改口徑後中低風險群組內的 streak 全為 0，該群組退化成以 bikes 排序，這是已知且接受的取捨。';
 COMMENT ON COLUMN public.hackathon_backend_risk_snapshot.streak_since IS
-  '★ 這段連續風險的起始 origin。前端顯示「已持續 N 小時」用這個，比「連續 N 輪」耐漏批；streak_n 主要供排序。無風險時 NULL。';
+  '★ 這段連續**高風險**的起始 origin。前端顯示「已持續 N 小時」用這個，比「連續 N 輪」耐漏批；streak_n 主要供排序。非高風險時 NULL。';
+COMMENT ON COLUMN public.hackathon_backend_risk_snapshot.stale_avail IS
+  '★ 目前這段停滯「鎖住」的可借數。正常情況等於 now_avail；錨點查無實測（now_avail 為 NULL）時沿用前值，好讓下一輪還比得出來 —— 所以不能用 now_avail 自我比較取代這一欄。';
+COMMENT ON COLUMN public.hackathon_backend_risk_snapshot.stale_since IS
+  '★ 目前這個可借數是從哪一輪 origin 開始沒變 —— 用來辨識卡住／疑似斷線的站。查詢端換算成 stale.hours（與 streak 同一套：(origin − since)/3600 + 0.5）。遞推規則：本輪 avail = 上輪 stale_avail → since 沿用；不同 → since = 本輪 origin；now_avail 為 NULL → 凍結沿用。★ 不吃 algo_ver —— 水位有沒有動跟風險演算法無關（與 streak 相反，這是兩套遞推）。★ now_carried=true 照樣累加：那本來就是「這站沒回報」，與水位不動是同一件事的兩種表現。';
 COMMENT ON COLUMN public.hackathon_backend_risk_snapshot.algo_ver IS
   '★ 判定當下的演算法版本（config.RISK_ALGO_VER，如 time-v1/pct15）。改門檻或改分級規則就換這個字串，streak 隨即重新起算 —— 跨版本的「連續 N 輪」沒有意義。用 jobs/batch_predict --risk-only 重算時，務必照 origin 由舊到新逐輪跑，streak 才接得起來。';
 COMMENT ON COLUMN public.hackathon_backend_risk_snapshot.created_at IS
@@ -123,7 +130,7 @@ ANALYZE public.hackathon_backend_risk_snapshot;
 
 -- ══ 驗收 ═════════════════════════════════════════════════════
 \echo
-\echo '── 表是否建起來（期望 1 列、22 欄）'
+\echo '── 表是否建起來（期望 1 列、24 欄；跑完 62_ 加 run_id 後為 25）'
 SELECT c.relname AS 表名,
        (SELECT count(*) FROM pg_attribute a
          WHERE a.attrelid = c.oid AND a.attnum > 0 AND NOT a.attisdropped) AS 欄數,
