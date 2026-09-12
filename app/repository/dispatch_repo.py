@@ -209,6 +209,30 @@ def close_many(items: list[tuple], closed_slot: datetime) -> int:
     return n
 
 
+def set_bikes_many(items: list[tuple[int, int]]) -> int:
+    """批次下修台數，items = [(id, 新台數), ...]。回傳實際改到的列數。
+
+    ★ 9/12 新增，只有 dispatch_sweep 規則③會用（建議台數下修 → 調度值跟著減）。
+      使用者按「確認調度」走的是 insert_many 的疊加路徑，不經過這裡。
+
+    ★ WHERE 帶 status='active'：跟 close() 同一個紀律 —— 已經收掉的單不該
+      再被改台數。掃單與收單之間若有人手動撤銷，這裡會安靜地改到 0 列，
+      那正是要的（rowcount 會反映出來）。
+
+    ★ 不寫 closed_* 也不留理由欄位：這筆單還活著，只是量變少了。
+      減了多少記在 job_run(dispatch_sweep).detail，不在單上另開欄位。
+    """
+    if not items:
+        return 0
+    n = 0
+    with get_conn().transaction(), get_conn().cursor() as cur:
+        for oid, bikes in items:
+            cur.execute(f"UPDATE {TABLE} SET bikes = %s "
+                        f" WHERE id = %s AND status = 'active'", (bikes, oid))
+            n += cur.rowcount
+    return n
+
+
 # ════════════════════════════════════════════════════════════
 # 冒煙：uv run python -m app.repository.dispatch_repo
 #   用 1999 年的假 slot + 真站號（要 join 主檔），跑完自己清掉。

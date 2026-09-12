@@ -7,7 +7,18 @@
 #
 #   ① anchor 不再有**同方向** action      → fulfilled
 #   ② **非 anchor 那端**出現**反方向** action → invalid
+#   ③ anchor 仍要調度，但**建議台數下修**   → 把超出的量從既有單扣掉
 #   ①優先於② —— anchor 已達成就不必在乎來源端的狀態。
+#   ③在①②之後才算 —— 要先知道哪些單這輪會被收掉，剩下的才是「已派量」。
+#
+# ★★ 2026-09-12 新增規則③。出處：meet/20260912/計劃-建議台數下修跟著減調度.md
+#   舊制只有「歸零才收單」：建議補 9 台派了 9 台，下一輪改成建議補 4 台，
+#   那 9 台會原封不動留著 —— 車照搬、來源站的餘裕照扣，多搬的 5 台無人過問。
+#   ③ 讓調度值跟著建議走：超出的量從**台數最少**的那筆開始扣，扣完換下一筆，
+#   直到超出量歸零。台數相同時**距離遠的先扣**（調度成本是距離，先砍貴的那趟）。
+#
+#   ⚠ 只減不增。建議台數變多時不自動加單 —— 要從哪個站補、跨不跨區，
+#     是調度員看過候選才能決定的事，排程不該替他按下去。
 #
 # ★ 判準一律用 action，不用 level（§13）。目標站從 high 掉到 mid，按
 #   level 就算「離開高風險」→ 標 fulfilled，但它其實還缺 5 台、車還在
@@ -32,6 +43,7 @@ import argparse
 import sys
 from datetime import datetime
 
+from app import config
 from app.repository import (dispatch_repo, forecast_run_repo, job_run_repo,
                             sys_config_repo)
 from app.repository.db import get_conn
@@ -49,7 +61,9 @@ def _actions(origin: datetime, uids: set[str]) -> dict[str, dict]:
         return {}
     with get_conn().cursor() as cur:
         cur.execute(
-            "SELECT r.station_uid, r.status, r.action, r.level_n, s.station_name "
+            # ★ r.bikes = 本輪建議調度台數（規則③拿它當上限）
+            "SELECT r.station_uid, r.status, r.action, r.level_n, r.bikes, "
+            "       s.station_name "
             "  FROM hackathon_backend_risk_snapshot r "
             "  JOIN hackathon_backend_station s USING (station_uid) "
             " WHERE r.origin = %s AND r.station_uid = ANY(%s)",
@@ -104,8 +118,71 @@ def judge(order: dict, snap: dict[str, dict]) -> tuple[str, str] | None:
     return None
 
 
+def cut_to_fit(orders: list[dict], closing: set[int],
+               snap: dict[str, dict]) -> tuple[list[tuple], list[tuple[int, int]]]:
+    """規則③：建議台數下修 → 把超出的量從既有調度單扣掉。
+
+    回傳 (要收掉的 [(id, status, reason)], 要改台數的 [(id, 新台數)])。
+
+    ★ 逐 anchor 獨立處理，順序無關：一張單只屬於一個 anchor，扣 A 站的單
+      不會改變 B 站的判定。扣減釋放出來的來源站餘裕要到下一次派車才看得到
+      （promised 是即時查的），sweep 自己不重新分配 —— 要補哪一站是人的決定。
+
+    ★ closing 是本輪已被①②判掉的單，必須先排除再算「已派量」：
+      連同要收掉的單一起算，會把即將消失的台數當成還在，少扣一輪。
+
+    ★ 扣減順序（使用者 9/12 定案）：台數少的先扣；台數相同時**距離遠的先扣**。
+      調度成本是距離 —— 同樣砍一趟，砍遠的那趟省得多，跟候選演算法（案丙）
+      同一個價值觀。
+
+    ★ 扣到不足 DISPATCH_MIN_BIKES（含 0）就整筆收掉，多減的部分**不往回補**：
+      寧可少派一台，也不要留一筆「跑一趟只搬 1 台」的單。這會讓實際派量
+      略低於建議值 —— 是刻意的，差額下一輪會重新出現在 need 裡。
+    """
+    close_rows: list[tuple] = []
+    set_rows: list[tuple[int, int]] = []
+
+    mine_of: dict[str, list[dict]] = {}
+    for o in orders:
+        if o["id"] in closing:
+            continue
+        mine_of.setdefault(o["anchor_uid"], []).append(o)
+
+    for anchor_uid, mine in mine_of.items():
+        a = _judged(snap.get(anchor_uid))
+        if a is None:
+            continue                        # no_forecast／查無此輪 → 不動（同①②的紀律）
+        act = mine[0]["action"]
+        if a["action"] != act:
+            continue                        # 方向已變，規則①會全收，輪不到這裡
+        want = a["bikes"] or 0
+        excess = sum(o["bikes"] for o in mine) - want
+        if excess <= 0:
+            continue
+
+        who = a["station_name"] or anchor_uid
+        for o in sorted(mine, key=lambda r: (r["bikes"], -(r["distance_m"] or 0))):
+            if excess <= 0:
+                break
+            left = o["bikes"] - min(excess, o["bikes"])
+            if left < config.DISPATCH_MIN_BIKES:
+                close_rows.append((o["id"], "invalid",
+                                   f"目標站 {who} 建議{_ACT_WORD[act]}下修為 {want} 台，"
+                                   f"本趟不再需要"))
+                excess -= o["bikes"]        # 整筆消失，可能扣過頭（見 docstring）
+            else:
+                set_rows.append((o["id"], left))
+                excess -= o["bikes"] - left
+
+    return close_rows, set_rows
+
+
 def sweep(origin: datetime | None = None, write_job_run: bool = True) -> dict:
-    """掃一輪。回傳計數，四項加總 = checked。"""
+    """掃一輪。回傳計數，fulfilled+invalid+cut_closed+active_remain = checked。
+
+    ★ cut_reduced 不進加總 —— 那些單還活著（只是台數變少），已經算在
+      active_remain 裡。把它也加進去會讓四項加總超過 checked。
+    """
     if origin is None:
         origin = forecast_run_repo.latest_risk_origin(sys_config_repo.effective_now())
     if origin is None:
@@ -125,18 +202,32 @@ def sweep(origin: datetime | None = None, write_job_run: bool = True) -> dict:
             if v is not None:
                 todo.append((o["id"], v[0], v[1]))
 
+        # ③ 建議台數下修 → 扣既有單。★ 一定要在①②之後：先知道哪些單這輪
+        #   會被收掉，剩下的才是真正的「已派量」。
+        cut_close, cut_set = cut_to_fit(orders, {t[0] for t in todo}, snap)
+        by_id = {o["id"]: o for o in orders}
+        cut_bikes = (sum(by_id[i]["bikes"] for i, _, _ in cut_close)
+                     + sum(by_id[i]["bikes"] - n for i, n in cut_set))
+
         # 一輪收單共用同一個虛擬時刻 —— 逐筆各自取會得到 N 個不同的時間
         closed_slot = sys_config_repo.effective_now()
-        dispatch_repo.close_many(todo, closed_slot)
+        dispatch_repo.close_many(todo + cut_close, closed_slot)
+        n_set = dispatch_repo.set_bikes_many(cut_set)
 
         c = {"checked": len(orders),
              "fulfilled": sum(1 for t in todo if t[1] == "fulfilled"),
-             "invalid": sum(1 for t in todo if t[1] == "invalid")}
-        c["active_remain"] = c["checked"] - c["fulfilled"] - c["invalid"]
+             "invalid": sum(1 for t in todo if t[1] == "invalid"),
+             # ③ 的兩種結果分開記：收掉的（扣到不足下限）與只是變少的
+             "cut_closed": len(cut_close),
+             "cut_reduced": n_set,
+             "cut_bikes": cut_bikes}
+        c["active_remain"] = (c["checked"] - c["fulfilled"] - c["invalid"]
+                              - c["cut_closed"])
 
         if run_id:
             job_run_repo.finish(run_id, "success",
-                                rows_written=len(todo), detail=c)
+                                rows_written=len(todo) + len(cut_close) + n_set,
+                                detail=c)
         return c
     except Exception as e:                            # noqa: BLE001
         if run_id:
@@ -156,6 +247,9 @@ def main() -> int:
         return 0
     print(f"   調度收尾：檢查 {c['checked']} 筆 → 完成 {c['fulfilled']}／"
           f"失效 {c['invalid']}／續留 {c['active_remain']}")
+    if c["cut_closed"] or c["cut_reduced"]:
+        print(f"   建議台數下修：減 {c['cut_bikes']} 台"
+              f"（下修 {c['cut_reduced']} 筆、扣到收掉 {c['cut_closed']} 筆）")
     return 0
 
 
