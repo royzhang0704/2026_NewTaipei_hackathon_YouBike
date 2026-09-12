@@ -113,8 +113,9 @@ export function KpiStrip() {
     active: boolean
   }
 
-  // 「所有 X」只切方向軸（跟以前的空站／滿站格一樣）；「高風險 X」是組合格，
-  // 點下去同時設 side + level，跟下方主動警示面板同一個 store。
+  // 「所有 X」跟「高風險 X」互斥，一次只會有一格亮：
+  //   所有 X   → side 對得上、且 level 是「全部」才算 active（不含只挑高風險的狀態）
+  //   高風險 X → side + level 都對得上才算 active（這格本身就是「滿站∩高風險」的交集）
   const tiles: Tile[] = (
     [
       { k: '所有滿站', v: counts.full, u: '站', sub: `建議取 ${nf(s.remove.bikes)} 台`, tone: 'cold', dk: 'full', axis: 'side', val: 'full' },
@@ -124,7 +125,10 @@ export function KpiStrip() {
     ] as const
   ).map((t) => ({
     ...t,
-    active: t.axis === 'combo' ? alertSide === t.val && alertLevel === 'high' : alertSide === t.val,
+    active:
+      t.axis === 'combo'
+        ? alertSide === t.val && alertLevel === 'high'
+        : alertSide === t.val && alertLevel === 'all',
   }))
 
   return (
@@ -221,15 +225,16 @@ export function KpiStrip() {
             <button
               key={t.k}
               type="button"
-              // side 格：只切方向軸，保留目前的風險篩選；combo 格：同時套用方向＋高風險，
-              // 再按一次（active）→ 兩條軸都清回「全部」。
+              // side 格「所有 X」：切方向軸、同時把 level 清回全部（不然選過「高風險 X」
+              // 後再點「所有 X」，畫面會悄悄還在套著 level='high'，跟「所有」的字面矛盾）。
+              // combo 格「高風險 X」：同時套用方向＋高風險；再按一次（active）→ 兩條軸都清回全部。
               onClick={() =>
                 setAlertFilter(
                   t.axis === 'combo'
                     ? t.active
                       ? { side: 'all', level: 'all' }
                       : { side: t.val, level: 'high' }
-                    : { side: t.active ? 'all' : t.val },
+                    : { side: t.active ? 'all' : t.val, level: 'all' },
                 )
               }
               aria-pressed={t.active}
