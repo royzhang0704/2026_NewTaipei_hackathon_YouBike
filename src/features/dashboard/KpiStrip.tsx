@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { AlertTriangle, ArrowDown, ArrowUp } from 'lucide-react'
-import { useAppStore, type AlertLevel, type AlertSide } from '@/stores/useAppStore'
+import { useAppStore, type AlertSide } from '@/stores/useAppStore'
 import { useAlerts } from '@/api/queries'
 import { cn } from '@/lib/utils'
 
-type Counts = { high: number; mid: number; shortage: number; full: number }
+type Counts = { high: number; mid: number; shortage: number; full: number; highFull: number; highShortage: number }
 type Deltas = Partial<Counts>
 
 /** 千分位。待補台數動輒四位數，不分位要數位數。 */
@@ -26,6 +26,8 @@ function useCountsDelta(counts: Counts | null, origin: string | undefined, scope
         mid: counts.mid - p.counts.mid,
         shortage: counts.shortage - p.counts.shortage,
         full: counts.full - p.counts.full,
+        highFull: counts.highFull - p.counts.highFull,
+        highShortage: counts.highShortage - p.counts.highShortage,
       })
     } else if (!p || p.scope !== scope) {
       setDeltas({})
@@ -50,8 +52,9 @@ export function KpiStrip() {
   // items 是警示清單（level!==none），limit:1000；正常遠低於此。爆量被砍時 data.total > items.length。
   const truncated = (data?.total ?? 0) > items.length
 
-  // 四格全部從同一份 items 現算 → 「依時機（現在/預測）」與「依方向（缺車/滿站）」是同一集合的兩種切法、
-  // 加起來永遠對得上。被截斷時：時機兩格改回 summary（伺服器算、沒砍），方向兩格照現算（會偏少但有下方「另有 N 筆」提示）。
+  // 六格數字全部從同一份 items 現算 →「所有／高風險」跟「滿站／空站」是同一集合的兩種切法，
+  // 加起來永遠對得上。被截斷時：level 相關的數字改回 summary（伺服器算、沒砍，但沒有
+  // 「高風險＋方向」的組合統計，只能現算，會偏少，有下方「另有 N 筆」提示可看出資料不完整）。
   const counts = useMemo<Counts | null>(() => {
     if (!s) return null
     const n = (pred: (i: (typeof items)[number]) => boolean) => items.filter(pred).length
@@ -60,19 +63,11 @@ export function KpiStrip() {
       mid: truncated ? s.mid : n((i) => i.level === 'mid'),
       shortage: n((i) => i.side === 'shortage'),
       full: n((i) => i.side === 'full'),
+      highFull: n((i) => i.level === 'high' && i.side === 'full'),
+      highShortage: n((i) => i.level === 'high' && i.side === 'shortage'),
     }
   }, [s, items, truncated])
 
-  // 時機兩格的「缺／滿」拆分（填 caption、也讓兩軸加總對得上）。截斷時現算不可信 → 不給。
-  const split = useMemo(() => {
-    if (truncated) return null
-    const c = (lvl: string, side: string) =>
-      items.filter((i) => i.level === lvl && i.side === side).length
-    return {
-      high: `缺 ${c('high', 'shortage')} · 滿 ${c('high', 'full')}`,
-      mid: `缺 ${c('mid', 'shortage')} · 滿 ${c('mid', 'full')}`,
-    }
-  }, [items, truncated])
   const deltas = useCountsDelta(counts, data?.origin, townCode)
 
   if (isError && !data) {
@@ -111,25 +106,25 @@ export function KpiStrip() {
     sub: string
     tone: 'hot' | 'cold'
     dk: keyof Counts
-    /** 這格對應哪一條篩選軸：風險（高/中）或供需方向（缺車/滿站） */
-    axis: 'side' | 'level'
-    val: AlertSide | AlertLevel
+    /** side：只切供需方向（保留目前的風險篩選不動）；
+        combo：同時套用「方向＋高風險」兩個條件（點第二次都清回全部）。 */
+    axis: 'side' | 'combo'
+    val: AlertSide
     active: boolean
   }
 
-  // 兩條獨立的軸：點某格只切自己那條軸、保留另一條 → 缺車＋高風險可同時成立、兩格都標「篩選中」，
-  // 與下方主動警示面板同一個 store、同一套 toggle 行為。
-  // 嚴重度兩格的白話整句就放在 k（標題列），跟「缺車／滿站」同一個位置 → 四格結構一致、頂端不留空。
+  // 「所有 X」只切方向軸（跟以前的空站／滿站格一樣）；「高風險 X」是組合格，
+  // 點下去同時設 side + level，跟下方主動警示面板同一個 store。
   const tiles: Tile[] = (
     [
-      { k: '已空站或滿站', v: counts.high, u: '站', sub: split?.high ?? '', tone: 'hot', dk: 'high', axis: 'level', val: 'high' },
-      { k: '1 小時內空站或滿站', v: counts.mid, u: '站', sub: split?.mid ?? '', tone: 'hot', dk: 'mid', axis: 'level', val: 'mid' },
-      { k: '空站', v: counts.shortage, u: '站', sub: `建議補 ${nf(s.refill.bikes)} 台`, tone: 'hot', dk: 'shortage', axis: 'side', val: 'shortage' },
-      { k: '滿站', v: counts.full, u: '站', sub: `建議取 ${nf(s.remove.bikes)} 台`, tone: 'cold', dk: 'full', axis: 'side', val: 'full' },
+      { k: '所有滿站', v: counts.full, u: '站', sub: `建議取 ${nf(s.remove.bikes)} 台`, tone: 'cold', dk: 'full', axis: 'side', val: 'full' },
+      { k: '高風險滿站', v: counts.highFull, u: '站', sub: '', tone: 'cold', dk: 'highFull', axis: 'combo', val: 'full' },
+      { k: '所有空站', v: counts.shortage, u: '站', sub: `建議補 ${nf(s.refill.bikes)} 台`, tone: 'hot', dk: 'shortage', axis: 'side', val: 'shortage' },
+      { k: '高風險空站', v: counts.highShortage, u: '站', sub: '', tone: 'hot', dk: 'highShortage', axis: 'combo', val: 'shortage' },
     ] as const
   ).map((t) => ({
     ...t,
-    active: t.axis === 'level' ? alertLevel === t.val : alertSide === t.val,
+    active: t.axis === 'combo' ? alertSide === t.val && alertLevel === 'high' : alertSide === t.val,
   }))
 
   return (
@@ -166,10 +161,6 @@ export function KpiStrip() {
           const label = `${t.k}，${nf(t.v)} ${t.u}${t.sub ? `，${t.sub}` : ''}${deltaLabel}，${
             t.active ? '按下取消篩選' : '按下篩選警示清單'
           }`
-          // 嚴重度兩格（axis==='level'）：標題列放白話整句、字距收窄；說明列僅在有變化量時出現。
-          // 缺車/滿站：短標題＋建議台數的標準三列。
-          const primary = t.axis === 'level'
-
           const delta = moved && (
             <span
               key={`d${d}`}
@@ -190,12 +181,10 @@ export function KpiStrip() {
                 className={cn('absolute inset-y-0 left-0 w-[2px]', t.tone === 'hot' ? 'bg-hot' : 'bg-cold')}
                 aria-hidden
               />
-              {/* 標題列：短標題（缺車/滿站）或白話整句（嚴重度兩格）都放這，四格對齊、頂端不留空。
-                  整句較長 → 收窄字距、允許必要時折行。 */}
+              {/* 標題列：四格標題都短，字距統一，四格對齊、頂端不留空。 */}
               <span
                 className={cn(
-                  'mb-[9px] flex min-h-[0.95rem] flex-wrap items-center gap-x-1 text-[0.68rem]',
-                  primary ? 'tracking-[0.02em]' : 'tracking-[0.16em]',
+                  'mb-[9px] flex min-h-[0.95rem] flex-wrap items-center gap-x-1 text-[0.68rem] tracking-[0.16em]',
                   t.active ? 'text-ink' : 'text-ink3',
                 )}
               >
@@ -232,12 +221,15 @@ export function KpiStrip() {
             <button
               key={t.k}
               type="button"
-              // 只切自己那條軸；active 再按 → 該軸回「全部」，跟 AlertList chip 的 toggle-off 一致
+              // side 格：只切方向軸，保留目前的風險篩選；combo 格：同時套用方向＋高風險，
+              // 再按一次（active）→ 兩條軸都清回「全部」。
               onClick={() =>
                 setAlertFilter(
-                  t.axis === 'side'
-                    ? { side: t.active ? 'all' : (t.val as AlertSide) }
-                    : { level: t.active ? 'all' : (t.val as AlertLevel) },
+                  t.axis === 'combo'
+                    ? t.active
+                      ? { side: 'all', level: 'all' }
+                      : { side: t.val, level: 'high' }
+                    : { side: t.active ? 'all' : t.val },
                 )
               }
               aria-pressed={t.active}
@@ -245,8 +237,8 @@ export function KpiStrip() {
               aria-label={label}
               className={cn(
                 'relative flex flex-col bg-panel px-4 py-3 text-left transition-colors hover:bg-raise focus-visible:-outline-offset-2',
-                // 嚴重度格少一列時（截斷、無「缺／滿」拆分）垂直置中，留白平均分上下；有拆分則跟其他格一樣三列填滿
-                primary && !t.sub && 'justify-center',
+                // 高風險兩格沒有 sub 說明列，垂直置中、留白平均分上下；有 sub 則跟其他格一樣三列填滿
+                !t.sub && !delta && 'justify-center',
                 t.active && 'bg-raise',
               )}
             >
