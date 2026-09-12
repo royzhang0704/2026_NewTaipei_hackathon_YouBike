@@ -170,7 +170,8 @@ proxy 不給 LLM 工具權限，而是**把查好的資料寫成文字，當使�
 | Harness | `imsoft_ubike_agentcore_harness`，model：Amazon Nova 2 Lite |
 | Harness ARN | `arn:aws:bedrock-agentcore:ap-northeast-1:597671487936:harness/imsoft_ubike_agentcore_harness-ZBEN5wmyW5` |
 
-- KB 內容 = `backend/kb/01~04-*.md`（`_harness_system_prompt.txt` 是 Harness 的 system prompt，不進 KB）。
+- KB 內容 = `backend/kb/01~03-*.md`（`_harness_system_prompt.txt` 是 Harness 的 system prompt，不進 KB；
+  原本還有一份 `04-命題背景與系統架構.md`，已移除不用）。
 - Harness playground 已實測：問「調度台數為什麼不是補到剛好脫離紅區」會呼叫 `Kb-Target Retrieve`、回答引用 `02` / `03` 文件。
 
 改 KB 內容的流程：改 `backend/kb/*.md` → 重新上傳到 S3 bucket → KB 頁面按 Sync。
@@ -186,7 +187,7 @@ region 重建，或需要理解整條串接關係時參考。console 按鈕位�
 - Bucket name：`imsoft-ubike-agentcore-kb`
 - AWS Region：**亞太地區（東京）ap-northeast-1**
 - 其餘保持預設（Block Public Access 維持開啟、不用開版本控制）→ **Create bucket**
-- 進去該 bucket → **Upload** → 選 `backend/kb/01-*.md` ~ `04-*.md` 四個檔案上傳
+- 進去該 bucket → **Upload** → 選 `backend/kb/01-*.md` ~ `03-*.md` 三個檔案上傳
   （`_harness_system_prompt.txt` **不要**上傳，那是 Harness 的 system prompt，不是 KB 內容）
 
 **2. Managed Knowledge Base**
@@ -197,7 +198,7 @@ region 重建，或需要理解整條串接關係時參考。console 按鈕位�
 - Data source：選 **Amazon S3**
   - Data source name：`imsoft-ubike-agentcore-kb-src`
   - S3 URI：瀏覽選到步驟 1 的 bucket（`s3://imsoft-ubike-agentcore-kb/`）
-  - Chunking and parsing configurations：選 **Default**（固定大小切塊，四份文件不大，預設夠用）
+  - Chunking and parsing configurations：選 **Default**（固定大小切塊，三份文件不大，預設夠用）
 - Embeddings model：選 **Titan Text Embeddings V2**（console 通常標示為預設/建議選項）
 - Vector store：選 **Quick create a new vector store**（底層是 Amazon OpenSearch Serverless，
   console 自動建 collection/index，不用自己另外去 OpenSearch Serverless 開）
