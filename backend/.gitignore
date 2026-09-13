@@ -1,0 +1,25 @@
+# ── Python ──
+.venv/
+__pycache__/
+*.pyc
+
+# ── macOS ──
+.DS_Store
+
+# ── 本機祕密：config.py 的預設值只是 dev 容器帳密，
+#    真正的憑證走環境變數（PGPASSWORD / AWS_*），不要進版控
+.env
+.env.*
+!.env.example
+
+# ── SQL 還原用的來源 dump：體積大且可從上游重新取得 ──
+sql/*.dump
+sql/*.sql.gz
+sql/*.tar
+
+# ── TDX token 快取（含有效憑證，效期 24h）與 job log ──
+.cache/
+logs/
+
+# ── 調度助理除錯 dump（ASSISTANT_DEBUG_DUMP=1）──
+assistant_debug/
