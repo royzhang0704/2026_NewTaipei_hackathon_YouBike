@@ -34,25 +34,35 @@
 
 ## 2. 系統架構
 
+### 雲端部署架構
+
+![AWS 雲端架構](../docs/AWS-雲端架構.svg)
+
+- **請求路徑**：瀏覽器經 CloudFront 取 S3 前端靜態檔，`/api` 轉 ALB 進 ECS `youbike-api`；API 讀寫 RDS，調度助理呼叫 Bedrock AgentCore
+- **回放迴圈**：另一個 ECS 服務 `youbike-demo-loop` 推進回放，批次預測打 SageMaker DeepAR 端點後寫回 RDS
+- **網路邊界**：ECS 與 RDS 位於 private subnet，對外入口只有 ALB；SageMaker 與 Bedrock 為 VPC 外的託管服務
+- **調度候選與台數由程式計算**，不經 LLM；Bedrock 無回應時調度功能照常可用
+
+詳細圖面（元件圖、時序圖、狀態圖、ER）見 [`docs/資料模型與系統圖面_v2.pdf`](../docs/資料模型與系統圖面_v2.pdf)。
+
+### 預測資料流
+
 ```
-                 ┌──────────────┐
-  baseline_grid ─│ Job A′  tick │──► level30（30 分水位歷程）
-  （歷史真相）    └──────────────┘        │
-                                          ▼
-                                  ┌─────────────┐
-                                  │  Job B      │──► SageMaker Endpoint
-                                  │ batch_predict│    (DeepAR H=6)
-                                  └─────────────┘
-                                          │
-                                          ▼
-                              forecast_history（q19/q50/q90）
-                                          │
-   單站檢視.html ◄── FastAPI /api/v1/stations/{uid}/day ◄──┘
-                     （查詢端只讀 DB，毫秒級，不打 SageMaker）
+  baseline_grid（歷史真相，30 分一格）
+        │
+        │  回放迴圈 jobs.demo --run，每跨一格依序：
+        ▼
+  ① replay_pull    ──► level30（30 分水位歷程）
+  ② batch_predict  ──► SageMaker Endpoint（DeepAR H=6）──► forecast_history（q19/q50/q90）
+  ③ 風險重判        ──► risk_snapshot
+  ④ dispatch_sweep ──► dispatch_order（收單、下修台數）
+
+  前端（React）◄── FastAPI /api/v1/*
+                  （查詢端只讀 DB，毫秒級，不打 SageMaker）
 ```
 
 **核心設計決定：查詢端與推論端分離。**
-Job B 每 30 分鐘把全站預測寫進 `forecast_history`，前端查詢只讀 DB。
+回放迴圈每 30 分鐘把全站預測寫進 `forecast_history`，前端查詢只讀 DB。
 `POST /predict` 的即時推論保留給 what-if 與交叉驗證，頁面不使用。
 
 ### 技術選型
@@ -61,9 +71,10 @@ Job B 每 30 分鐘把全站預測寫進 `forecast_history`，前端查詢只讀
 |---|---|
 | 服務 | Python 3.12 + FastAPI + uvicorn（uv 管相依） |
 | 資料庫 | PostgreSQL 17（podman 容器 `youbike-pg`，port 5433，由 `docker/docker-compose.yml` 起） |
-| 模型 | AWS SageMaker DeepAR，`ap-northeast-1` |
+| 模型 | AWS SageMaker DeepAR（region 依 `SM_REGION`／`AWS_REGION`） |
+| 生成式 AI | Amazon Bedrock AgentCore（調度助理） |
 | 資料源 | `baseline_grid`（歷史數據重採樣成 30 分格，2026-04~07）|
-| 前端 | 單檔 HTML（`meet/20260831/單站檢視.html`），`file://` 直開 |
+| 前端 | React 19 + Vite + TypeScript，見 [`../frontend/README.md`](../frontend/README.md) |
 
 ---
 
@@ -147,7 +158,14 @@ T = max(2, int(0.15 × 車柱 + 0.5))     # 不封頂，99 柱大站 T = 15
 | GET | `/api/v1/stations[?town_code=18]` | 站表（全量 1,538 站約 330 KB，前端開頁抓一次） |
 | GET | `/api/v1/stations/{uid}` | 單站基本資料 |
 | GET | `/api/v1/stations/{uid}/day` | **主要查詢**：9h 實況 + 3h 預測 + 風險 + 調度建議（只讀 DB） |
+| GET | `/api/v1/stations/{uid}/risk[?n=48]` | 單站風險歷程（新→舊），看「連續亮了幾輪」 |
+| GET | `/api/v1/alerts` | 全市／同區風險告警清單，高 > 中 > 低；可篩 `town_code`／`level`／`side`／`action`，附最近可調出站 |
 | POST | `/api/v1/predict` | 即時推論（打 SageMaker；支援 `is_holiday` what-if） |
+| GET | `/api/v1/dispatch/orders[?status=active]` | 調度單清單（`active`／`fulfilled`／`invalid`） |
+| GET | `/api/v1/dispatch/candidates/{uid}` | 某風險站的調度候選站與建議台數 |
+| POST | `/api/v1/dispatch/orders` | 確認調度（下單）；驗證失敗整批 400 |
+| DELETE | `/api/v1/dispatch/orders/{order_id}` | 撤銷調度單（軟刪，status 改為 `invalid`） |
+| POST | `/api/v1/assistant/chat` | 調度助理對話（SSE 串流） |
 
 ```bash
 curl -s "http://127.0.0.1:8000/api/v1/stations/NWT500218133/day" | python3 -m json.tool
@@ -202,9 +220,9 @@ Job A（即時 API）／Job C（歷史 API 自癒回補）／`sync_stations`（�
 ## 7. 快速開始
 
 ```bash
-cd code_backend
+cd backend
 
-# 1. 資料庫 —— 第一次 up 就會自己把 docker/bak/*.dump 灌進去（要數分鐘）
+# 1. 資料庫（docker/docker-compose.yml 與 dump 不隨本 repo 附上） —— 第一次 up 就會自己把 docker/bak/*.dump 灌進去（要數分鐘）
 #    表結構、來源資料、level30 歷史、cat 對照全都在 dump 裡，不用再跑任何 sql/
 podman-compose -f ../docker/docker-compose.yml up -d
 podman-compose -f ../docker/docker-compose.yml logs -f          # 看還原進度
@@ -249,7 +267,7 @@ psql -v ON_ERROR_STOP=1 -f sql/42_level30_is_imputed.sql -f sql/43_level30_carry
 ⚠️ `10_restore_source.sh` 內含 `podman rm -f youbike-pg` —— 它會**強制刪掉 compose
 起的那座容器**。跑之前先確認你真的要重建，不是只想連 DB。
 
-前端：瀏覽器直接開 `meet/20260831/單站檢視.html`（右上角可改 API 位址）。
+前端：見 [`../frontend/README.md`](../frontend/README.md)。
 
 完整指令請見 **[COMMANDS.md](COMMANDS.md)**。
 
@@ -279,26 +297,30 @@ backend/
 ├── app/
 │   ├── main.py              FastAPI 進入點（router 註冊、CORS、錯誤處理）
 │   ├── config.py            ★ 常數集中地，每個值都註明來源
-│   ├── controller/          路由層（station / predict / assistant / health）
-│   ├── service/             業務層（overview 風險判定／predict payload／station）
+│   ├── controller/          路由層（station / predict / dispatch / assistant / health）
+│   ├── service/             業務層（風險判定／告警清單／單站視圖／調度候選／predict payload）
+│   │   └── assistant/       調度助理（意圖與範圍、資料包、LLM 呼叫與數字驗證、SSE 事件流）
 │   ├── repository/          資料層（每張表一支）
 │   └── schema/              Pydantic DTO
 ├── jobs/
-│   ├── tick.py              ★ 每分鐘輪詢，排程入口
+│   ├── demo.py              ★ 回放時鐘開關 + 常駐推進迴圈（--run）
 │   ├── replay_pull.py       Job A′：baseline_grid → level30（唯一資料來源）
 │   ├── batch_predict.py     Job B：全站批次預測（50 站一批）
+│   ├── dispatch_sweep.py    調度單收單（batch_predict 階段三）
 │   ├── predict_range.py     一段 origin 逐輪批打（歷史區補預測）
-│   ├── demo.py              demo 時鐘 start/stop/status
-│   ├── run_job.sh           wrapper：鎖 + log（cron 走這支）
-│   └── crontab.txt          cron 設定（由使用者自行安裝）
-├── sql/                     建置腳本 10 ~ 50
+│   ├── run_job.sh           wrapper：鎖 + log
+│   └── crontab.txt          已停用（2026-09-12 起由 demo.py --run 推進）
+├── sql/                     建置腳本 10 ~ 70
+├── kb/                      調度助理知識庫（名詞定義、門檻與台數、調度 SOP）
+├── eval/                    調度助理回覆評測
 ├── aws/deploy_endpoint.py   SageMaker Model → Config → Endpoint
+├── Dockerfile               容器映像（啟動只提供 API）
 └── COMMANDS.md              指令速查
 ```
 
 資料表（皆 `hackathon_backend_` 前綴，與訓練管線的表切開）：
 `station` / `town` / `level30` / `calendar` / `forecast_history` / `forecast_run` /
-`risk_snapshot` / `job_run` / `sys_config` / `station_slot_average`
+`risk_snapshot` / `job_run` / `sys_config` / `station_slot_average` / `dispatch_order`
 
 ---
 
@@ -323,11 +345,15 @@ backend/
 
 ## 10. 成本與收尾
 
-🔴 **demo 結束務必刪 SageMaker endpoint**（`ml.m5.large` 按秒計費）：
+🔴 **demo 結束務必刪 SageMaker endpoint**（預設 `ml.m5.large`，按秒計費）：
 
 ```bash
-aws sagemaker delete-endpoint --endpoint-name youbike-deepar-demo2604 --region ap-northeast-1
-aws sagemaker list-endpoints --region ap-northeast-1     # 確認回空
+# endpoint 名稱與 region 以實際部署為準（後端讀 ENDPOINT_NAME、SM_REGION／AWS_REGION）
+export SM_REGION=<region>
+export ENDPOINT_NAME=<endpoint 名稱>
+
+aws sagemaker delete-endpoint --endpoint-name "$ENDPOINT_NAME" --region "$SM_REGION"
+aws sagemaker list-endpoints --region "$SM_REGION"      # 確認回空
 ```
 
 只有 endpoint 計費；endpoint-config 與 model 是中繼資料，零元。
