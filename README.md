@@ -8,7 +8,7 @@
 | | |
 |---|---|
 | 🎬 Live Demo | <https://d1p5vz2q9c26xn.cloudfront.net/> |
-| 📹 Demo 錄影 | 〔待補：錄影連結〕 |
+| 📹 Demo 錄影 | <https://youtu.be/0v3va1FXuRQ> |
 | 📑 提案簡報 | [`docs/提案簡報.pdf`](docs/提案簡報.pdf) |
 
 ---
