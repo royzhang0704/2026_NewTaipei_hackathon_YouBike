@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="zh-Hant">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Noto+Serif+TC:wght@400;500;600&family=Noto+Sans+TC:wght@400;500;600&display=swap"
+      rel="stylesheet"
+    />
+    <title>新北市 YouBike 調度中心</title>
+    <script>
+      // first paint 前定調 主題 + 文字大小，避免閃動。
+      try {
+        var d = document.documentElement
+        var t = localStorage.getItem('yb_theme')
+        if (t !== 'light' && t !== 'dark')
+          // 只有系統明確偏好深色才用深色；明確淺色或無偏好一律淺色
+          t = matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
+        d.dataset.theme = t
+        var f = localStorage.getItem('yb_font')
+        if (f === 'sm' || f === 'lg') d.dataset.font = f
+      } catch (e) {}
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
